@@ -19,17 +19,52 @@ const firebaseConfig = {
 };
 
 // Initialize Firebase
-const app = initializeApp(firebaseConfig);
-export const analytics = typeof window !== 'undefined' ? getAnalytics(app) : null;
-export const auth = initializeAuth(app, {
-    persistence: [indexedDBLocalPersistence, browserLocalPersistence, browserSessionPersistence]
-});
+let app;
+try {
+    app = initializeApp(firebaseConfig);
+} catch (e) {
+    console.error("Firebase Initialization failed:", e);
+    app = { options: firebaseConfig }; // Fallback minimal app object
+}
+
+export const analytics = typeof window !== 'undefined' ? (async () => {
+    try {
+        return await getAnalytics(app);
+    } catch (e) {
+        console.warn("Firebase Analytics failed to initialize. Skipping.");
+        return null;
+    }
+})() : null;
+
+export const auth = (() => {
+    try {
+        return initializeAuth(app, {
+            persistence: [indexedDBLocalPersistence, browserLocalPersistence, browserSessionPersistence]
+        });
+    } catch (e) {
+        console.error("Firebase Auth failed to initialize:", e);
+        return { app }; // Minimal mock auth
+    }
+})();
 
 // Modern Firestore Initialization with resilient cache settings
-export const db = initializeFirestore(app, {
-    localCache: persistentLocalCache({
-        tabManager: persistentMultipleTabManager()
-    })
-});
+export const db = (() => {
+    try {
+        return initializeFirestore(app, {
+            localCache: persistentLocalCache({
+                tabManager: persistentMultipleTabManager()
+            })
+        });
+    } catch (e) {
+        console.error("Firestore failed to initialize:", e);
+        return null;
+    }
+})();
 
-export const storage = getStorage(app);
+export const storage = (() => {
+    try {
+        return getStorage(app);
+    } catch (e) {
+        return null;
+    }
+})();
