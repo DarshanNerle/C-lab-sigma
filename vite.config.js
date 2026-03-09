@@ -88,6 +88,7 @@ export default defineConfig({
     vercelApiEmulation()
   ],
   root: 'client',
+  envDir: '../',
   build: {
     outDir: '../dist',
     emptyOutDir: true,
