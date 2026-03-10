@@ -198,6 +198,8 @@ export default function LearnMore() {
         query: '',
         source: 'fallback',
         videos: [],
+        featuredChannel: null,
+        featuredVideos: [],
         playlists: [],
         trending: [],
         relatedTopics: [],
@@ -220,6 +222,8 @@ export default function LearnMore() {
                 query: data.query || cleanTopic,
                 source: data.source || 'fallback',
                 videos: Array.isArray(data.videos) ? data.videos : [],
+                featuredChannel: data.featuredChannel || null,
+                featuredVideos: Array.isArray(data.featuredVideos) ? data.featuredVideos : [],
                 playlists: Array.isArray(data.playlists) ? data.playlists : [],
                 trending: Array.isArray(data.trending) ? data.trending : [],
                 relatedTopics: Array.isArray(data.relatedTopics) ? data.relatedTopics : [],
@@ -343,6 +347,42 @@ export default function LearnMore() {
                         {error}
                     </div>
                 )}
+
+                <section className="space-y-4">
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                        <div>
+                            <h2 className="text-2xl font-black text-white">From {result.featuredChannel?.name || 'Featured Channel'}</h2>
+                            <p className="mt-1 text-sm text-slate-400">Latest picks from the recommended YouTube channel.</p>
+                        </div>
+                        {result.featuredChannel?.url && (
+                            <a
+                                href={result.featuredChannel.url}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="inline-flex items-center gap-2 rounded-full border border-cyan-400/30 bg-cyan-500/10 px-4 py-2 text-xs font-semibold text-cyan-100 transition hover:border-cyan-300/40 hover:bg-cyan-500/20"
+                            >
+                                Visit Channel
+                                <ExternalLink className="h-3.5 w-3.5" />
+                            </a>
+                        )}
+                    </div>
+                    <div className="grid gap-5 xl:grid-cols-3">
+                        {result.featuredVideos.map((video) => (
+                            <VideoCard
+                                key={`featured-${video.videoId}`}
+                                video={video}
+                                onWatch={setActiveVideo}
+                                onToggleSave={toggleSaveVideo}
+                                isSaved={savedVideoIds.has(video.videoId)}
+                            />
+                        ))}
+                        {!loading && !result.featuredVideos.length && (
+                            <div className="rounded-[28px] border border-white/10 bg-slate-900/60 p-5 text-sm text-slate-400">
+                                Channel videos are not available right now. Check your internet connection and try again.
+                            </div>
+                        )}
+                    </div>
+                </section>
 
                 <section className="space-y-4">
                     <div className="flex items-center justify-between">

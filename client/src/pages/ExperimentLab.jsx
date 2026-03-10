@@ -658,7 +658,8 @@ export default function ExperimentLab() {
   const [chemicalQuery, setChemicalQuery] = useState('');
   const [expandedCategories, setExpandedCategories] = useState(() => Object.fromEntries(CHEMICAL_LIBRARY.map((category) => [category.id, true])));
   const [dispenseVolume, setDispenseVolume] = useState(10);
-  const [reagentConcentration, setReagentConcentration] = useState(0.1);
+  const [reagentConcentration, setReagentConcentration] = useState(0);
+  const [reagentNormality, setReagentNormality] = useState(0.1);
   const [workspaceVersion, setWorkspaceVersion] = useState(1);
   const [workspaceState, setWorkspaceState] = useState({ instances: [], meterValue: 7, conductivityValue: 0.05 });
   const [readings, setReadings] = useState([]);
@@ -1073,6 +1074,7 @@ export default function ExperimentLab() {
                 theme={theme}
                 reagentVolume={dispenseVolume}
                 reagentConcentration={reagentConcentration}
+                reagentNormality={reagentNormality}
                 onAddReading={handleLogReading}
                 onSimulationEvent={handleWorkspaceEvent}
                 initialWorkspaceState={workspaceSeed}
@@ -1115,7 +1117,7 @@ export default function ExperimentLab() {
                   <strong>{reagentConcentration.toFixed(reagentConcentration < 0.1 ? 2 : 1)} M</strong>
                 </div>
                 <div className="lab-volume-row">
-                  {[0.01, 0.05, 0.1, 0.5, 1].map((value) => (
+                  {[0, 0.01, 0.05, 0.1, 0.5, 1].map((value) => (
                     <button
                       key={value}
                       type="button"
@@ -1130,13 +1132,50 @@ export default function ExperimentLab() {
                   <span>Custom</span>
                   <input
                     type="number"
-                    min="0.001"
+                    min="0"
                     max="5"
                     step="0.01"
                     value={reagentConcentration}
-                    onChange={(event) => setReagentConcentration(Math.max(0.001, Number(event.target.value) || 0.1))}
+                    onChange={(event) => {
+                      const next = Number(event.target.value);
+                      setReagentConcentration(Number.isFinite(next) ? Math.max(0, next) : 0);
+                    }}
                   />
                   <span>M</span>
+                </label>
+              </div>
+
+              <div className="lab-concentration-box">
+                <div className="lab-concentration-head">
+                  <span className="lab-section-label">Normality</span>
+                  <strong>{reagentNormality.toFixed(reagentNormality < 0.1 ? 2 : 1)} N</strong>
+                </div>
+                <div className="lab-volume-row">
+                  {[0, 0.01, 0.05, 0.1, 0.5, 1].map((value) => (
+                    <button
+                      key={value}
+                      type="button"
+                      className={Math.abs(reagentNormality - value) < 0.0001 ? 'active' : ''}
+                      onClick={() => setReagentNormality(value)}
+                    >
+                      {value} N
+                    </button>
+                  ))}
+                </div>
+                <label className="lab-concentration-input">
+                  <span>Custom</span>
+                  <input
+                    type="number"
+                    min="0"
+                    max="5"
+                    step="0.01"
+                    value={reagentNormality}
+                    onChange={(event) => {
+                      const next = Number(event.target.value);
+                      setReagentNormality(Number.isFinite(next) ? Math.max(0, next) : 0);
+                    }}
+                  />
+                  <span>N</span>
                 </label>
               </div>
 
@@ -1156,6 +1195,7 @@ export default function ExperimentLab() {
                           onDragStart={(event) => {
                             event.dataTransfer.setData('reagent', chemical.id);
                             event.dataTransfer.setData('concentration', String(reagentConcentration));
+                            event.dataTransfer.setData('normality', String(reagentNormality));
                           }}
                         >
                           <span className="lab-swatch" style={{ background: chemical.color }} />

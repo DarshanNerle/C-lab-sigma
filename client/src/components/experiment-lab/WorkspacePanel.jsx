@@ -27,7 +27,7 @@ const CHEMICALS = {
   litmus: { name: 'Litmus', ph: 7, color: '#7c3aed', indicator: true, model: 'indicator', conductivityFactor: 0.1 },
   universal_indicator: { name: 'Universal Indicator', ph: 7, color: '#22c55e', indicator: true, model: 'indicator', conductivityFactor: 0.12 },
   ethanol: { name: 'Ethanol', ph: 7, color: '#ecfbff', kind: 'organic', model: 'solvent', conductivityFactor: 0.02 },
-  water: { name: 'Water', ph: 7, color: '#c4e8ff', kind: 'neutral', model: 'solvent', conductivityFactor: 0.05 },
+  water: { name: 'Distilled Water', ph: 7, color: '#c4e8ff', kind: 'neutral', model: 'solvent', molarity: 0, normality: 0, equivalents: 0, conductivityFactor: 0.05 },
   tap_water: { name: 'Tap Water', ph: 7.5, color: '#a9ddff', kind: 'sample', model: 'salt', molarity: 0.025, conductivityFactor: 1.9, hardnessFactor: 1.2 },
   river_water: { name: 'River Water', ph: 7.2, color: '#8fd4c5', kind: 'sample', model: 'salt', molarity: 0.04, conductivityFactor: 2.6, hardnessFactor: 1.8 }
 };
@@ -261,12 +261,23 @@ function deriveSolutionMetrics(volumeMl, composition = {}, fallbackReagents = []
   };
 }
 
+function resolveMolarityFromNormality(chem, normality, fallbackMolarity) {
+  if (!Number.isFinite(normality)) return fallbackMolarity;
+  if (normality === 0) return 0;
+  const equivalents = chem?.equivalents;
+  if (Number.isFinite(equivalents) && equivalents > 0) {
+    return normality / equivalents;
+  }
+  return normality;
+}
+
 function getSolutionStrength(inst, reagentId) {
   const totalMoles = Object.values(inst?.composition || {}).reduce((sum, value) => sum + Number(value || 0), 0);
   if ((inst?.volume || 0) > 0 && totalMoles > 0) {
     return totalMoles / Math.max(inst.volume / 1000, 1e-6);
   }
-  return CHEMICALS[reagentId]?.molarity || 0.1;
+  const molarity = CHEMICALS[reagentId]?.molarity;
+  return Number.isFinite(molarity) ? molarity : 0.1;
 }
 
 function getLiquidZone(vessel) {
@@ -620,7 +631,8 @@ function getSpawnPosition(type, count, workspaceRect) {
 export default function WorkspacePanel({
   theme = 'dark',
   reagentVolume = 10,
-  reagentConcentration = 0.1,
+  reagentConcentration = 0,
+  reagentNormality = 0.1,
   onAddReading,
   onSimulationEvent,
   initialWorkspaceState,
@@ -854,7 +866,20 @@ export default function WorkspacePanel({
       const add = chem.indicator ? Math.min(2, reagentVolume) : Math.max(0.1, reagentVolume);
       const newVol = Math.min(inst.capacity, inst.volume + add);
       const addVol = newVol - inst.volume;
-      const selectedConcentration = chem.indicator ? 0.001 : Number(e.dataTransfer.getData('concentration') || reagentConcentration || chem.molarity || 0.1);
+      const rawConcentration = e.dataTransfer.getData('concentration');
+      const rawNormality = e.dataTransfer.getData('normality');
+      const parsedConcentration = rawConcentration === '' ? NaN : Number(rawConcentration);
+      const parsedNormality = rawNormality === '' ? NaN : Number(rawNormality);
+      const fallbackConcentration = Number.isFinite(reagentConcentration)
+        ? reagentConcentration
+        : (Number.isFinite(chem.molarity) ? chem.molarity : 0.1);
+      const fallbackNormality = Number.isFinite(reagentNormality) ? reagentNormality : NaN;
+      const baseConcentration = Number.isFinite(parsedConcentration) ? parsedConcentration : fallbackConcentration;
+      const normalityValue = Number.isFinite(parsedNormality) ? parsedNormality : fallbackNormality;
+      const concentrationFromNormality = resolveMolarityFromNormality(chem, normalityValue, baseConcentration);
+      const selectedConcentration = chem.indicator
+        ? 0.001
+        : (reagentId === 'water' ? 0 : concentrationFromNormality);
       const addedMoles = (addVol / 1000) * selectedConcentration;
       const composition = mergeComposition(inst.composition || {}, { [reagentId]: addedMoles });
       const metrics = deriveSolutionMetrics(newVol, composition, [...inst.reagents, reagentId], inst.tempC || 25);
@@ -1078,6 +1103,10 @@ export default function WorkspacePanel({
 
         <div className={`mt-2 rounded-md px-2 py-1 border text-[10px] ${theme === 'dark' ? 'bg-slate-900/80 border-slate-700 text-slate-300' : 'bg-slate-100 border-slate-200 text-slate-600'}`}>
           Reagent concentration: <span className="font-bold">{Number(reagentConcentration).toFixed(reagentConcentration < 0.1 ? 2 : 1)} M</span>
+        </div>
+
+        <div className={`mt-2 rounded-md px-2 py-1 border text-[10px] ${theme === 'dark' ? 'bg-slate-900/80 border-slate-700 text-slate-300' : 'bg-slate-100 border-slate-200 text-slate-600'}`}>
+          Reagent normality: <span className="font-bold">{Number(reagentNormality).toFixed(reagentNormality < 0.1 ? 2 : 1)} N</span>
         </div>
 
         {snapMessage && (
