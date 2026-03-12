@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { 
     User, LogOut, ChevronDown, Settings, 
@@ -29,6 +29,7 @@ export default function ProfileDropdown() {
     const [isSettingsOpen, setIsSettingsOpen] = useState(false);
     const dropdownRef = useRef(null);
     const navigate = useNavigate();
+    const location = useLocation();
 
     // XP Calculation for Progress Bar (assume 500 XP per level)
     const nextLevelXP = 500;
@@ -59,6 +60,11 @@ export default function ProfileDropdown() {
         document.addEventListener('mousedown', handleClickOutside);
         return () => document.removeEventListener('mousedown', handleClickOutside);
     }, []);
+
+    useEffect(() => {
+        setIsOpen(false);
+        setIsSettingsOpen(false);
+    }, [location.pathname]);
 
     return (
         <div className="relative z-[500]" ref={dropdownRef}>

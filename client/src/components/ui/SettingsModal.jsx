@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { X, Moon, Sun, Volume2, VolumeX, Zap, Brain, Shield, Info, Loader2 } from 'lucide-react';
 import useThemeStore from '../../store/useThemeStore';
@@ -30,10 +30,13 @@ export default function SettingsModal({ isOpen, onClose }) {
     const { user } = useAuthStore();
     const [isSaving, setIsSaving] = useState(false);
     const [availableVoices, setAvailableVoices] = useState([]);
+    const [isDragEnabled, setIsDragEnabled] = useState(false);
+    const [dragOffset, setDragOffset] = useState({ x: 0, y: 0 });
+    const dragStateRef = useRef(null);
 
     const difficultyLevels = ['Beginner', 'Intermediate', 'Advanced', 'Professional'];
 
-    React.useEffect(() => {
+    useEffect(() => {
         const loadVoices = () => {
             if (typeof window === 'undefined' || !window.speechSynthesis) return;
             setAvailableVoices(window.speechSynthesis.getVoices() || []);
@@ -48,6 +51,46 @@ export default function SettingsModal({ isOpen, onClose }) {
             }
         };
     }, []);
+
+    useEffect(() => {
+        if (!isOpen) return;
+        setDragOffset({ x: 0, y: 0 });
+        setIsDragEnabled(false);
+    }, [isOpen]);
+
+    useEffect(() => {
+        return () => {
+            window.removeEventListener('mousemove', handleDrag);
+            window.removeEventListener('mouseup', stopDrag);
+        };
+    }, []);
+
+    const startDrag = (event) => {
+        if (!isDragEnabled) return;
+        event.preventDefault();
+        dragStateRef.current = {
+            startX: event.clientX,
+            startY: event.clientY,
+            originX: dragOffset.x,
+            originY: dragOffset.y
+        };
+        window.addEventListener('mousemove', handleDrag);
+        window.addEventListener('mouseup', stopDrag);
+    };
+
+    const handleDrag = (event) => {
+        const state = dragStateRef.current;
+        if (!state) return;
+        const nextX = state.originX + (event.clientX - state.startX);
+        const nextY = state.originY + (event.clientY - state.startY);
+        setDragOffset({ x: nextX, y: nextY });
+    };
+
+    const stopDrag = () => {
+        dragStateRef.current = null;
+        window.removeEventListener('mousemove', handleDrag);
+        window.removeEventListener('mouseup', stopDrag);
+    };
 
     const handleApply = async () => {
         if (!user?.email) {
@@ -94,7 +137,7 @@ export default function SettingsModal({ isOpen, onClose }) {
     return (
         <AnimatePresence>
             {isOpen && (
-                <div className="fixed inset-0 z-[1000] flex items-center justify-center p-4">
+                <div className="fixed inset-0 z-[1000] p-4">
                     {/* Backdrop */}
                     <motion.div
                         initial={{ opacity: 0 }}
@@ -109,10 +152,16 @@ export default function SettingsModal({ isOpen, onClose }) {
                         initial={{ opacity: 0, scale: 0.95, y: 20 }}
                         animate={{ opacity: 1, scale: 1, y: 0 }}
                         exit={{ opacity: 0, scale: 0.95, y: 20 }}
-                        className="relative w-full max-w-lg bg-[#0f172a] border border-white/10 rounded-3xl shadow-2xl overflow-hidden"
+                        className="absolute left-1/2 top-1/2 w-full max-w-lg max-h-[80vh] -translate-x-1/2 -translate-y-1/2 bg-[#0f172a] border border-white/10 rounded-3xl shadow-2xl overflow-hidden flex flex-col"
+                        style={{ transform: `translate(-50%, -50%) translate(${dragOffset.x}px, ${dragOffset.y}px)` }}
                     >
                         {/* Header */}
-                        <div className="px-8 py-6 border-b border-white/5 flex justify-between items-center bg-white/5">
+                        <div
+                            onDoubleClick={() => setIsDragEnabled((prev) => !prev)}
+                            onMouseDown={startDrag}
+                            className={`px-8 py-6 border-b border-white/5 flex justify-between items-center bg-white/5 ${isDragEnabled ? 'cursor-move' : 'cursor-default'}`}
+                            title="Double-click to toggle drag"
+                        >
                             <div>
                                 <h2 className="text-xl font-black text-white uppercase tracking-tighter">System Configuration</h2>
                                 <p className="text-xs text-slate-400 mt-1">Adjust laboratory parameters and interface behavior.</p>
@@ -126,7 +175,7 @@ export default function SettingsModal({ isOpen, onClose }) {
                         </div>
 
                         {/* Settings Body */}
-                        <div className="p-8 space-y-8 max-h-[70vh] overflow-y-auto custom-scrollbar">
+                        <div className="p-8 space-y-8 min-h-0 flex-1 overflow-y-auto custom-scrollbar">
                             
                             {/* Visual & Audio */}
                             <section className="space-y-4">
