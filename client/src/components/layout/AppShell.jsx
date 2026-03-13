@@ -13,6 +13,7 @@ import {
     Menu,
     Monitor,
     Moon,
+    NotebookPen,
     Search,
     Sun,
     Trophy,
@@ -29,7 +30,8 @@ const primaryNav = [
     { label: 'Learn More', to: '/learn-more', icon: GraduationCap, shortcut: 'M' },
     { label: 'AI Chat', to: '/ai-chemistry-master', icon: Bot, shortcut: 'A' },
     { label: 'Experiments', to: '/experiments', icon: Command, shortcut: 'Ctrl+K' },
-    { label: 'History', to: '/leaderboard', icon: Trophy, shortcut: '' }
+    { label: 'Experiment History', to: '/history', icon: NotebookPen, shortcut: '' },
+    { label: 'League', to: '/leaderboard', icon: Trophy, shortcut: '' }
 ];
 
 const sidebarItems = [

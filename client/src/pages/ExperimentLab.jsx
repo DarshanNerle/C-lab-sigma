@@ -28,6 +28,7 @@ import {
   X
 } from 'lucide-react';
 import { useThemeContext } from '../context/ThemeContext';
+import useAuthStore from '../store/useAuthStore';
 import WorkspacePanel from '../components/experiment-lab/WorkspacePanel';
 import {
   MAX_UPLOAD_SIZE_BYTES,
@@ -35,6 +36,8 @@ import {
   readUploadedExperimentText,
   validateUploadFile
 } from '../utils/experimentUtils';
+import { db } from '../firebase/config';
+import { addDoc, collection, doc, getDoc, serverTimestamp, setDoc } from 'firebase/firestore';
 import experiment1 from '../data/experiments/experiment1.json';
 import experiment2 from '../data/experiments/experiment2.json';
 import experiment3 from '../data/experiments/experiment3.json';
@@ -643,6 +646,7 @@ function getEquipmentLabel(type) {
 
 export default function ExperimentLab() {
   const { theme, setTheme } = useThemeContext();
+  const { user, profile } = useAuthStore((state) => ({ user: state.user, profile: state.profile }));
   const labShellRef = useRef(null);
   const [customExperiments, setCustomExperiments] = useState(() => loadCustomExperiments().map((item) => normalizeExperiment(item, 'custom')));
   const presetExperiments = useMemo(() => PRESET_EXPERIMENTS.map(createPresetExperiment), []);
@@ -675,6 +679,8 @@ export default function ExperimentLab() {
   const [isFullscreen, setIsFullscreen] = useState(false);
   const previousStepRef = useRef(-1);
   const previousWarningRef = useRef('');
+  const experimentStartRef = useRef(Date.now());
+  const savedHistoryRef = useRef(new Set());
 
   const selectedExperiment = useMemo(
     () => experiments.find((item) => item.id === selectedExperimentId) || experiments[0],
@@ -735,18 +741,102 @@ export default function ExperimentLab() {
     const expected = Number(result.calculatedValue ?? result.averageVolume ?? 0);
     const manual = Number(manualResultValue);
     if (!Number.isFinite(manual) || manualResultValue === '' || !Number.isFinite(expected) || expected <= 0) {
-      return { status: 'pending', message: 'Enter a manual result value to compare with the calculated result.' };
+      return { status: 'pending', message: 'Enter a manual result value to compare with the calculated result.', errorPercent: null };
     }
 
     const errorPercent = Math.abs((manual - expected) / expected) * 100;
     if (errorPercent <= 5) {
-      return { status: 'correct', message: `Result accepted. Error = ${errorPercent.toFixed(2)}%.` };
+      return { status: 'correct', message: `Result accepted. Error = ${errorPercent.toFixed(2)}%.`, errorPercent };
     }
     if (errorPercent <= 10) {
-      return { status: 'close', message: `Result is close but outside the preferred tolerance. Error = ${errorPercent.toFixed(2)}%.` };
+      return { status: 'close', message: `Result is close but outside the preferred tolerance. Error = ${errorPercent.toFixed(2)}%.`, errorPercent };
     }
-    return { status: 'wrong', message: `Result does not match the calculated value. Error = ${errorPercent.toFixed(2)}%.` };
+    return { status: 'wrong', message: `Result does not match the calculated value. Error = ${errorPercent.toFixed(2)}%.`, errorPercent };
   }, [manualResultValue, result]);
+
+  useEffect(() => {
+    if (!user?.uid || !selectedExperiment || !db) return;
+    if (!hasStarted || !manualResultValue || resultCheck.status === 'pending') return;
+    if (!readings.length) return;
+
+    const saveKey = `${user.uid}:${selectedExperiment.id}:${manualResultValue}:${result.trialCount}`;
+    if (savedHistoryRef.current.has(saveKey)) return;
+
+    const persist = async () => {
+      const errorPercent = Number(resultCheck.errorPercent);
+      const accuracy = Number.isFinite(errorPercent) ? Math.max(0, Math.min(100, Math.round(100 - errorPercent))) : 0;
+      const score = accuracy;
+      const avgVolume = Number.isFinite(result.averageVolume) ? result.averageVolume : 0;
+      const calculatedValue = Number.isFinite(result.calculatedValue) ? result.calculatedValue : null;
+      const resultSummary = calculatedValue !== null
+        ? `Calculated value: ${calculatedValue.toFixed(4)} (avg ${avgVolume.toFixed(2)} mL)`
+        : `Average volume: ${avgVolume.toFixed(2)} mL`;
+      const observation = observationNote.trim() || autoObservations[0]?.text || 'No observation recorded.';
+      const durationMinutes = Math.max(1, Math.round((Date.now() - experimentStartRef.current) / 60000));
+      const userName = profile?.name || user?.displayName || user?.email?.split('@')[0] || 'Student';
+
+      const historyPayload = {
+        userId: user.uid,
+        userName,
+        experimentName: selectedExperiment.title || 'Experiment',
+        chemicalsUsed: Array.isArray(selectedExperiment.chemicals) ? selectedExperiment.chemicals : [],
+        instrumentsUsed: Array.isArray(requiredEquipment) && requiredEquipment.length
+          ? requiredEquipment.map(getEquipmentLabel)
+          : (Array.isArray(selectedExperiment.apparatus) ? selectedExperiment.apparatus : []),
+        result: manualResultValue ? `${resultSummary} | Manual: ${manualResultValue}` : resultSummary,
+        observation,
+        score,
+        accuracy,
+        completedAt: serverTimestamp(),
+        duration: durationMinutes
+      };
+
+      await addDoc(collection(db, 'experiment_history'), historyPayload);
+
+      const leagueRef = doc(db, 'league_scores', user.uid);
+      const leagueSnap = await getDoc(leagueRef);
+      const existing = leagueSnap.exists() ? leagueSnap.data() : {};
+      const prevTotalExperiments = Number(existing.totalExperiments) || 0;
+      const prevTotalScore = Number(existing.totalScore) || 0;
+      const prevAverageAccuracy = Number(existing.averageAccuracy) || 0;
+      const totalExperiments = prevTotalExperiments + 1;
+      const totalScore = prevTotalScore + score;
+      const averageAccuracy = Math.round(((prevAverageAccuracy * prevTotalExperiments) + accuracy) / totalExperiments);
+
+      await setDoc(leagueRef, {
+        userId: user.uid,
+        userName,
+        totalExperiments,
+        totalScore,
+        averageAccuracy,
+        lastExperiment: selectedExperiment.title || 'Experiment',
+        lastUpdated: serverTimestamp()
+      }, { merge: true });
+    };
+
+    savedHistoryRef.current.add(saveKey);
+    persist().catch(() => {
+      savedHistoryRef.current.delete(saveKey);
+    });
+  }, [
+    autoObservations,
+    db,
+    hasStarted,
+    manualResultValue,
+    observationNote,
+    profile?.name,
+    readings.length,
+    requiredEquipment,
+    result.averageVolume,
+    result.calculatedValue,
+    result.trialCount,
+    resultCheck.errorPercent,
+    resultCheck.status,
+    selectedExperiment,
+    user?.displayName,
+    user?.email,
+    user?.uid
+  ]);
 
   useEffect(() => {
     const handleFullscreenChange = () => {
@@ -794,6 +884,8 @@ export default function ExperimentLab() {
         text: `Step 1: Review the experiment information for ${selectedExperiment?.title || 'the selected lab'}.`
       }
     ]);
+    savedHistoryRef.current.clear();
+    experimentStartRef.current = Date.now();
     previousStepRef.current = -1;
     previousWarningRef.current = '';
     if (mode === 'manual') {
@@ -802,6 +894,8 @@ export default function ExperimentLab() {
   }
 
   useEffect(() => {
+    savedHistoryRef.current.clear();
+    experimentStartRef.current = Date.now();
     resetExperiment('selection');
   }, [selectedExperimentId]);
 
@@ -818,6 +912,7 @@ export default function ExperimentLab() {
   }, [stage]);
 
   async function startExperiment() {
+    experimentStartRef.current = Date.now();
     setHasStarted(true);
     setActiveTab('virtual');
     pushNotification('Experiment Started', 'Workspace, chemicals, and instructions are ready.', 'success', { minimized: true });

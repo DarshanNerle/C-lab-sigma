@@ -1,4 +1,6 @@
 import { safeLocalStorage } from '../utils/safeStorage';
+import { auth, db } from '../firebase/config';
+import { doc, getDoc, setDoc, updateDoc } from 'firebase/firestore';
 
 const LOCAL_KEYS = {
     user: 'app_user',
@@ -8,19 +10,181 @@ const LOCAL_KEYS = {
     experiments: 'app_experiments'
 };
 
-const REQUEST_TIMEOUT_MS = 7000;
 const STORAGE_MODES = {
-    MONGO: 'mongo',
+    FIREBASE: 'firebase',
     LOCAL: 'local'
 };
 
-const MODE_SWITCH_MESSAGE = 'MongoDB unavailable, switching to local mode';
+const MODE_SWITCH_MESSAGE = 'Cloud storage unavailable, switching to local mode';
 
 const inFlightWrites = new Map();
 
+const baseSettings = () => ({
+    darkMode: true,
+    theme: 'dark',
+    soundEnabled: true,
+    soundVolume: 0.5,
+    immersiveMode: false,
+    aiMode: 'mini_assistant',
+    animationIntensity: 'normal',
+    voiceEnabled: false,
+    speechRate: 1,
+    speechPitch: 1,
+    selectedVoice: '',
+    voiceGender: 'auto'
+});
+
+const baseLabState = () => ({
+    selectedChemicals: [],
+    volumes: {},
+    resultColor: '',
+    experimentType: 'custom'
+});
+
+const normalizeTimestamp = (value) => {
+    if (!value) return null;
+    if (typeof value.toDate === 'function') return value.toDate();
+    if (value instanceof Date) return value;
+    const parsed = new Date(value);
+    return Number.isNaN(parsed.getTime()) ? null : parsed;
+};
+
+const normalizeHistoryEntry = (entry) => {
+    if (!entry || typeof entry !== 'object') return null;
+    const createdAt = normalizeTimestamp(entry.createdAt);
+    return {
+        ...entry,
+        createdAt: createdAt ? createdAt.toISOString() : entry.createdAt
+    };
+};
+
+const normalizeUserRecord = (data = {}, fallbackEmail = '', fallbackUid = '') => {
+    const createdAt = normalizeTimestamp(data.createdAt);
+    const updatedAt = normalizeTimestamp(data.updatedAt);
+    const settingsValue = data.settings && typeof data.settings === 'object' ? data.settings : {};
+    const labStateValue = data.currentLabState === null
+        ? null
+        : (data.currentLabState && typeof data.currentLabState === 'object' ? data.currentLabState : baseLabState());
+
+    const history = Array.isArray(data.aiHistory)
+        ? data.aiHistory.map(normalizeHistoryEntry).filter(Boolean)
+        : [];
+
+    return {
+        userId: data.userId || fallbackUid || fallbackEmail,
+        email: data.email || fallbackEmail,
+        name: typeof data.name === 'string' ? data.name : '',
+        role: typeof data.role === 'string' ? data.role : 'student',
+        level: Number.isFinite(Number(data.level)) ? Number(data.level) : 1,
+        xp: Number.isFinite(Number(data.xp)) ? Number(data.xp) : 0,
+        badges: Array.isArray(data.badges) ? data.badges : [],
+        currentLabState: labStateValue,
+        aiHistory: history,
+        settings: { ...baseSettings(), ...settingsValue },
+        experiments: Array.isArray(data.experiments) ? data.experiments : [],
+        createdAt: (createdAt || new Date()).toISOString(),
+        updatedAt: (updatedAt || createdAt || new Date()).toISOString()
+    };
+};
+
+const buildUserRecord = ({ uid, email, name = '' }) => {
+    const now = new Date();
+    return {
+        userId: uid || email,
+        email,
+        name,
+        role: 'student',
+        level: 1,
+        xp: 0,
+        badges: [],
+        currentLabState: baseLabState(),
+        aiHistory: [],
+        settings: baseSettings(),
+        experiments: [],
+        createdAt: now,
+        updatedAt: now
+    };
+};
+
+const normalizeEmail = (email) => {
+    if (typeof email !== 'string') return '';
+    return email.trim().toLowerCase();
+};
+
+const isFirebaseConfigured = () => {
+    const apiKey = auth?.app?.options?.apiKey;
+    if (!apiKey) return false;
+    const raw = String(apiKey);
+    if (!raw || raw.includes('FIREBASE_API_KEY') || raw.includes('undefined')) return false;
+    return true;
+};
+
+const clampNumber = (value, min, max, fallback) => {
+    const n = Number(value);
+    if (!Number.isFinite(n)) return fallback;
+    return Math.min(max, Math.max(min, n));
+};
+
+const sanitizeSettings = (settings = {}) => {
+    if (!settings || typeof settings !== 'object') {
+        return {};
+    }
+
+    const aiMode = settings.aiMode === 'full_learning' ? 'full_learning' : 'mini_assistant';
+    const animationIntensity = settings.animationIntensity === 'reduced' ? 'reduced' : 'normal';
+    const theme = settings.theme === 'light' || settings.darkMode === false ? 'light' : 'dark';
+
+    return {
+        darkMode: theme === 'dark',
+        theme,
+        soundEnabled: settings.soundEnabled !== false,
+        soundVolume: clampNumber(settings.soundVolume, 0, 1, 0.5),
+        immersiveMode: !!settings.immersiveMode,
+        aiMode,
+        animationIntensity,
+        voiceEnabled: !!settings.voiceEnabled,
+        speechRate: clampNumber(settings.speechRate, 0.5, 2, 1),
+        speechPitch: clampNumber(settings.speechPitch, 0, 2, 1),
+        selectedVoice: typeof settings.selectedVoice === 'string' ? settings.selectedVoice.slice(0, 120) : '',
+        voiceGender: settings.voiceGender === 'male' || settings.voiceGender === 'female' ? settings.voiceGender : 'auto'
+    };
+};
+
+const sanitizeLabState = (labState = {}) => {
+    if (!labState || typeof labState !== 'object') {
+        return null;
+    }
+
+    const selectedChemicals = Array.isArray(labState.selectedChemicals)
+        ? labState.selectedChemicals.slice(0, 50)
+        : [];
+
+    const volumes = typeof labState.volumes === 'object' && labState.volumes !== null
+        ? labState.volumes
+        : {};
+
+    return {
+        selectedChemicals,
+        volumes,
+        resultColor: typeof labState.resultColor === 'string' ? labState.resultColor : '',
+        experimentType: typeof labState.experimentType === 'string' ? labState.experimentType : 'custom'
+    };
+};
+
+const upsertExperiment = (list, experiment) => {
+    const experiments = Array.isArray(list) ? [...list] : [];
+    const index = experiments.findIndex((item) => item?.id === experiment?.id);
+    if (index >= 0) {
+        experiments[index] = { ...experiments[index], ...experiment };
+    } else {
+        experiments.unshift(experiment);
+    }
+    return experiments.slice(0, 300);
+};
+
 class StorageService {
     constructor() {
-        this.storageMode = STORAGE_MODES.MONGO;
+        this.storageMode = STORAGE_MODES.FIREBASE;
         this.modeListeners = new Set();
         this.hasLoggedMongoFallback = false;
     }
@@ -46,7 +210,7 @@ class StorageService {
     }
 
     setStorageMode(mode) {
-        const normalized = mode === STORAGE_MODES.LOCAL ? STORAGE_MODES.LOCAL : STORAGE_MODES.MONGO;
+        const normalized = mode === STORAGE_MODES.LOCAL ? STORAGE_MODES.LOCAL : STORAGE_MODES.FIREBASE;
         if (this.storageMode === normalized) return;
         this.storageMode = normalized;
         if (normalized === STORAGE_MODES.LOCAL && !this.hasLoggedMongoFallback) {
@@ -59,9 +223,11 @@ class StorageService {
 
     shouldFallback(error) {
         if (!error) return false;
-        if (error.kind === 'timeout' || error.kind === 'network' || error.kind === 'no_response') return true;
-        if (error.kind === 'http' && (Number(error.status) >= 500 || Number(error.status) === 404)) return true;
-        return false;
+        const code = error?.code || error?.name || '';
+        if (code === 'permission-denied' || code === 'unauthenticated') return true;
+        if (code === 'unavailable' || code === 'failed-precondition' || code === 'resource-exhausted') return true;
+        if (code === 'cancelled' || code === 'aborted' || code === 'internal') return true;
+        return true;
     }
 
     dedupeWrite(key, task) {
@@ -132,6 +298,7 @@ class StorageService {
         const current = userMap.byEmail[email] || {
             email,
             name: '',
+            role: 'student',
             level: 1,
             xp: 0,
             badges: [],
@@ -217,82 +384,95 @@ class StorageService {
         return this.saveLocalExperiments(email, current);
     }
 
-    createTimeoutController(timeoutMs = REQUEST_TIMEOUT_MS) {
-        const controller = new AbortController();
-        const timerId = setTimeout(() => controller.abort(), timeoutMs);
-        return { controller, timerId };
+    getAuthIdentity(email) {
+        const normalizedEmail = normalizeEmail(email);
+        const currentUser = auth?.currentUser || null;
+        const resolvedEmail = normalizedEmail || normalizeEmail(currentUser?.email);
+        const uid = currentUser?.uid || '';
+        return { uid, email: resolvedEmail };
     }
 
-    async request(path, options = {}) {
-        const { method = 'GET', body, timeoutMs = REQUEST_TIMEOUT_MS } = options;
-        const { controller, timerId } = this.createTimeoutController(timeoutMs);
+    canUseFirebase(uid) {
+        if (this.storageMode === STORAGE_MODES.LOCAL) return false;
+        if (!isFirebaseConfigured()) return false;
+        if (!db) return false;
+        return !!uid;
+    }
 
-        try {
-            const response = await fetch(path, {
-                method,
-                headers: body ? { 'Content-Type': 'application/json' } : undefined,
-                body: body ? JSON.stringify(body) : undefined,
-                signal: controller.signal
-            });
-
-            if (!response) {
-                throw { kind: 'no_response' };
-            }
-
-            let payload = {};
-            try {
-                payload = await response.json();
-            } catch {
-                payload = {};
-            }
-
-            if (!response.ok) {
-                throw {
-                    kind: 'http',
-                    status: response.status,
-                    message: payload?.error || 'Request failed'
-                };
-            }
-
-            return payload;
-        } catch (error) {
-            if (error?.name === 'AbortError') {
-                throw { kind: 'timeout', message: 'Request timed out' };
-            }
-            if (error?.kind) throw error;
-            throw { kind: 'network', message: error?.message || 'Network error' };
-        } finally {
-            clearTimeout(timerId);
+    syncLocalFromUser(normalizedEmail, user) {
+        if (!user || !normalizedEmail) return;
+        this.saveLocalUserRecord(normalizedEmail, user);
+        if (user.settings) this.saveLocalSettings(normalizedEmail, user.settings);
+        if (user.currentLabState !== undefined) this.saveLocalLabState(normalizedEmail, user.currentLabState);
+        if (Array.isArray(user.aiHistory)) {
+            const historyMap = this.readMap(LOCAL_KEYS.aiHistory);
+            historyMap.byEmail[normalizedEmail] = user.aiHistory.slice(0, 50);
+            this.writeMap(LOCAL_KEYS.aiHistory, historyMap);
+        }
+        if (Array.isArray(user.experiments)) {
+            this.saveLocalExperiments(normalizedEmail, user.experiments);
         }
     }
 
+    async loadFirebaseUser(uid, email) {
+        const ref = doc(db, 'users', uid);
+        const snap = await getDoc(ref);
+        if (!snap.exists()) return null;
+        const data = snap.data();
+        return { ref, data, user: normalizeUserRecord(data, email, uid) };
+    }
+
+    async ensureFirebaseUser(uid, email, name = '') {
+        const existing = await this.loadFirebaseUser(uid, email);
+        if (existing) return existing;
+
+        const record = buildUserRecord({ uid, email, name });
+        const ref = doc(db, 'users', uid);
+        await setDoc(ref, record);
+        await this.ensureLeagueRecord(uid, record.user.name || name || email);
+        return { ref, data: record, user: normalizeUserRecord(record, email, uid) };
+    }
+
+    async ensureLeagueRecord(uid, nameFallback = '') {
+        if (!uid || !db) return;
+        const leagueRef = doc(db, 'league_scores', uid);
+        const leagueSnap = await getDoc(leagueRef);
+        if (leagueSnap.exists()) return;
+
+        const currentUser = auth?.currentUser || null;
+        const userName = String(nameFallback || currentUser?.displayName || currentUser?.email?.split('@')[0] || 'Student').trim() || 'Student';
+        await setDoc(leagueRef, {
+            userId: uid,
+            userName,
+            totalExperiments: 0,
+            totalScore: 0,
+            averageAccuracy: 0,
+            lastExperiment: '',
+            lastUpdated: new Date()
+        }, { merge: true });
+    }
+
     async getUser(email) {
-        const normalizedEmail = String(email || '').trim().toLowerCase();
+        const { uid, email: normalizedEmail } = this.getAuthIdentity(email);
         if (!normalizedEmail) return { user: null, source: 'local', storageMode: this.storageMode };
 
-        if (this.storageMode !== STORAGE_MODES.LOCAL) {
+        if (this.canUseFirebase(uid)) {
             try {
-                const data = await this.request(`/api/users/get?email=${encodeURIComponent(normalizedEmail)}`);
-                if (data?.user) {
-                    this.setStorageMode(STORAGE_MODES.MONGO);
-                    this.saveLocalUserRecord(normalizedEmail, data.user);
-                    if (data.user.settings) this.saveLocalSettings(normalizedEmail, data.user.settings);
-                    if (data.user.currentLabState) this.saveLocalLabState(normalizedEmail, data.user.currentLabState);
-                    if (Array.isArray(data.user.aiHistory)) {
-                        const historyMap = this.readMap(LOCAL_KEYS.aiHistory);
-                        historyMap.byEmail[normalizedEmail] = data.user.aiHistory.slice(0, 50);
-                        this.writeMap(LOCAL_KEYS.aiHistory, historyMap);
-                    }
-                    if (Array.isArray(data.user.experiments)) {
-                        this.saveLocalExperiments(normalizedEmail, data.user.experiments);
-                    }
-                    return { user: data.user, source: data.source || 'mongodb', storageMode: STORAGE_MODES.MONGO };
+                const record = await this.loadFirebaseUser(uid, normalizedEmail);
+                if (!record) {
+                    this.setStorageMode(STORAGE_MODES.FIREBASE);
+                    return { user: null, source: 'firebase', storageMode: STORAGE_MODES.FIREBASE };
                 }
-                return { user: null, source: data?.source || 'mongodb', storageMode: STORAGE_MODES.MONGO };
+                this.setStorageMode(STORAGE_MODES.FIREBASE);
+                await this.ensureLeagueRecord(uid, record.user?.name || normalizedEmail);
+                this.syncLocalFromUser(normalizedEmail, record.user);
+                return { user: record.user, source: 'firebase', storageMode: STORAGE_MODES.FIREBASE };
             } catch (error) {
                 if (!this.shouldFallback(error)) throw new Error(error?.message || 'Failed to load user');
                 this.setStorageMode(STORAGE_MODES.LOCAL);
             }
+        } else if (this.storageMode !== STORAGE_MODES.LOCAL) {
+            this.setStorageMode(STORAGE_MODES.LOCAL);
         }
 
         const localUser = this.mergeLocalUser(normalizedEmail);
@@ -300,27 +480,24 @@ class StorageService {
     }
 
     async saveUser({ email, name = '' }) {
-        const normalizedEmail = String(email || '').trim().toLowerCase();
+        const { uid, email: normalizedEmail } = this.getAuthIdentity(email);
         const safeName = String(name || '').trim();
         if (!normalizedEmail) throw new Error('Valid email is required.');
 
-        const writeKey = `saveUser:${normalizedEmail}:${safeName}`;
+        const writeKey = `saveUser:${uid || 'local'}:${normalizedEmail}:${safeName}`;
         return this.dedupeWrite(writeKey, async () => {
-            if (this.storageMode !== STORAGE_MODES.LOCAL) {
+            if (this.canUseFirebase(uid)) {
                 try {
-                    const data = await this.request('/api/users/create', {
-                        method: 'POST',
-                        body: { email: normalizedEmail, name: safeName }
-                    });
-                    if (data?.user) {
-                        this.setStorageMode(STORAGE_MODES.MONGO);
-                        this.saveLocalUserRecord(normalizedEmail, data.user);
-                    }
-                    return { user: data?.user || null, source: data?.source || 'mongodb', storageMode: STORAGE_MODES.MONGO };
+                    const record = await this.ensureFirebaseUser(uid, normalizedEmail, safeName);
+                    this.setStorageMode(STORAGE_MODES.FIREBASE);
+                    this.syncLocalFromUser(normalizedEmail, record.user);
+                    return { user: record.user, source: 'firebase', storageMode: STORAGE_MODES.FIREBASE };
                 } catch (error) {
                     if (!this.shouldFallback(error)) throw new Error(error?.message || 'Failed to save user');
                     this.setStorageMode(STORAGE_MODES.LOCAL);
                 }
+            } else if (this.storageMode !== STORAGE_MODES.LOCAL) {
+                this.setStorageMode(STORAGE_MODES.LOCAL);
             }
 
             const user = this.saveLocalUserRecord(normalizedEmail, { name: safeName });
@@ -329,71 +506,85 @@ class StorageService {
     }
 
     async updateUserProfile({ email, name, settings }) {
-        const normalizedEmail = String(email || '').trim().toLowerCase();
+        const { uid, email: normalizedEmail } = this.getAuthIdentity(email);
         if (!normalizedEmail) return { ok: false, source: 'local', storageMode: this.storageMode };
 
         const payload = {
-            email: normalizedEmail,
             name: typeof name === 'string' ? name.trim() : undefined,
-            settings: settings && typeof settings === 'object' ? settings : undefined
+            settings: settings && typeof settings === 'object' ? sanitizeSettings(settings) : undefined
         };
 
-        const writeKey = `updateUser:${normalizedEmail}:${JSON.stringify(payload)}`;
+        const writeKey = `updateUser:${uid || 'local'}:${normalizedEmail}:${JSON.stringify(payload)}`;
         return this.dedupeWrite(writeKey, async () => {
-            if (this.storageMode !== STORAGE_MODES.LOCAL) {
+            if (this.canUseFirebase(uid)) {
                 try {
-                    const data = await this.request('/api/users/update', {
-                        method: 'POST',
-                        body: payload
-                    });
-                    this.setStorageMode(STORAGE_MODES.MONGO);
-                    if (payload.name || payload.settings) {
+                    const updatePayload = {
+                        updatedAt: new Date()
+                    };
+                    if (payload.name !== undefined) updatePayload.name = payload.name;
+                    if (payload.settings !== undefined) updatePayload.settings = payload.settings;
+
+                    await setDoc(doc(db, 'users', uid), updatePayload, { merge: true });
+
+                    this.setStorageMode(STORAGE_MODES.FIREBASE);
+                    if (payload.name !== undefined || payload.settings !== undefined) {
                         this.saveLocalUserRecord(normalizedEmail, {
                             name: payload.name,
                             settings: payload.settings
                         });
-                        if (payload.settings) this.saveLocalSettings(normalizedEmail, payload.settings);
+                        if (payload.settings !== undefined) this.saveLocalSettings(normalizedEmail, payload.settings);
                     }
-                    return { ok: true, user: data?.user || null, source: data?.source || 'mongodb', storageMode: STORAGE_MODES.MONGO };
+                    if (payload.name) {
+                        await setDoc(doc(db, 'league_scores', uid), {
+                            userId: uid,
+                            userName: payload.name
+                        }, { merge: true });
+                    }
+                    return { ok: true, source: 'firebase', storageMode: STORAGE_MODES.FIREBASE };
                 } catch (error) {
                     if (!this.shouldFallback(error)) {
-                        return { ok: false, error: error?.message || 'Failed to update user', source: 'mongo', storageMode: STORAGE_MODES.MONGO };
+                        return { ok: false, error: error?.message || 'Failed to update user', source: 'firebase', storageMode: STORAGE_MODES.FIREBASE };
                     }
                     this.setStorageMode(STORAGE_MODES.LOCAL);
                 }
+            } else if (this.storageMode !== STORAGE_MODES.LOCAL) {
+                this.setStorageMode(STORAGE_MODES.LOCAL);
             }
 
-            if (payload.name || payload.settings) {
+            if (payload.name !== undefined || payload.settings !== undefined) {
                 this.saveLocalUserRecord(normalizedEmail, {
                     name: payload.name,
                     settings: payload.settings
                 });
-                if (payload.settings) this.saveLocalSettings(normalizedEmail, payload.settings);
+                if (payload.settings !== undefined) this.saveLocalSettings(normalizedEmail, payload.settings);
             }
             return { ok: true, user: this.mergeLocalUser(normalizedEmail), source: 'local', storageMode: STORAGE_MODES.LOCAL };
         });
     }
 
     async updateSettings({ email, settings }) {
-        const normalizedEmail = String(email || '').trim().toLowerCase();
+        const { uid, email: normalizedEmail } = this.getAuthIdentity(email);
         if (!normalizedEmail) return { ok: false, source: 'local', storageMode: this.storageMode };
 
-        const payload = settings && typeof settings === 'object' ? settings : {};
-        const writeKey = `updateSettings:${normalizedEmail}:${JSON.stringify(payload)}`;
+        const payload = settings && typeof settings === 'object' ? sanitizeSettings(settings) : {};
+        const writeKey = `updateSettings:${uid || 'local'}:${normalizedEmail}:${JSON.stringify(payload)}`;
         return this.dedupeWrite(writeKey, async () => {
-            if (this.storageMode !== STORAGE_MODES.LOCAL) {
+            if (this.canUseFirebase(uid)) {
                 try {
-                    const data = await this.request('/api/users/update-settings', {
-                        method: 'PATCH',
-                        body: { email: normalizedEmail, settings: payload }
-                    });
-                    this.setStorageMode(STORAGE_MODES.MONGO);
+                    await setDoc(doc(db, 'users', uid), {
+                        settings: payload,
+                        updatedAt: new Date()
+                    }, { merge: true });
+
+                    this.setStorageMode(STORAGE_MODES.FIREBASE);
                     this.saveLocalSettings(normalizedEmail, payload);
-                    return { ok: true, source: data?.source || 'mongodb', storageMode: STORAGE_MODES.MONGO };
+                    return { ok: true, source: 'firebase', storageMode: STORAGE_MODES.FIREBASE };
                 } catch (error) {
-                    if (!this.shouldFallback(error)) return { ok: false, error: error?.message || 'Failed to update settings', source: 'mongo', storageMode: STORAGE_MODES.MONGO };
+                    if (!this.shouldFallback(error)) return { ok: false, error: error?.message || 'Failed to update settings', source: 'firebase', storageMode: STORAGE_MODES.FIREBASE };
                     this.setStorageMode(STORAGE_MODES.LOCAL);
                 }
+            } else if (this.storageMode !== STORAGE_MODES.LOCAL) {
+                this.setStorageMode(STORAGE_MODES.LOCAL);
             }
 
             this.saveLocalSettings(normalizedEmail, payload);
@@ -402,33 +593,37 @@ class StorageService {
     }
 
     async saveLabState({ email, labState }) {
-        const normalizedEmail = String(email || '').trim().toLowerCase();
+        const { uid, email: normalizedEmail } = this.getAuthIdentity(email);
         if (!normalizedEmail) return { ok: false, source: 'local', storageMode: this.storageMode };
 
-        const writeKey = `saveLab:${normalizedEmail}:${JSON.stringify(labState || {})}`;
+        const sanitizedLab = sanitizeLabState(labState);
+        const writeKey = `saveLab:${uid || 'local'}:${normalizedEmail}:${JSON.stringify(sanitizedLab || {})}`;
         return this.dedupeWrite(writeKey, async () => {
-            if (this.storageMode !== STORAGE_MODES.LOCAL) {
+            if (this.canUseFirebase(uid)) {
                 try {
-                    const data = await this.request('/api/users/save-lab', {
-                        method: 'POST',
-                        body: { email: normalizedEmail, labState }
-                    });
-                    this.setStorageMode(STORAGE_MODES.MONGO);
-                    this.saveLocalLabState(normalizedEmail, labState);
-                    return { ok: true, source: data?.source || 'mongodb', storageMode: STORAGE_MODES.MONGO };
+                    await setDoc(doc(db, 'users', uid), {
+                        currentLabState: sanitizedLab,
+                        updatedAt: new Date()
+                    }, { merge: true });
+
+                    this.setStorageMode(STORAGE_MODES.FIREBASE);
+                    this.saveLocalLabState(normalizedEmail, sanitizedLab);
+                    return { ok: true, source: 'firebase', storageMode: STORAGE_MODES.FIREBASE };
                 } catch (error) {
-                    if (!this.shouldFallback(error)) return { ok: false, error: error?.message || 'Failed to save lab state', source: 'mongo', storageMode: STORAGE_MODES.MONGO };
+                    if (!this.shouldFallback(error)) return { ok: false, error: error?.message || 'Failed to save lab state', source: 'firebase', storageMode: STORAGE_MODES.FIREBASE };
                     this.setStorageMode(STORAGE_MODES.LOCAL);
                 }
+            } else if (this.storageMode !== STORAGE_MODES.LOCAL) {
+                this.setStorageMode(STORAGE_MODES.LOCAL);
             }
 
-            this.saveLocalLabState(normalizedEmail, labState);
+            this.saveLocalLabState(normalizedEmail, sanitizedLab);
             return { ok: true, source: 'local', storageMode: STORAGE_MODES.LOCAL };
         });
     }
 
     async saveAIHistory({ email, question, answer }) {
-        const normalizedEmail = String(email || '').trim().toLowerCase();
+        const { uid, email: normalizedEmail } = this.getAuthIdentity(email);
         const safeQuestion = String(question || '').trim();
         const safeAnswer = String(answer || '').trim();
         if (!normalizedEmail || !safeQuestion || !safeAnswer) return { ok: false, source: 'local', storageMode: this.storageMode };
@@ -439,21 +634,26 @@ class StorageService {
             createdAt: new Date().toISOString()
         };
 
-        const writeKey = `saveAIHistory:${normalizedEmail}:${safeQuestion}:${safeAnswer.slice(0, 120)}`;
+        const writeKey = `saveAIHistory:${uid || 'local'}:${normalizedEmail}:${safeQuestion}:${safeAnswer.slice(0, 120)}`;
         return this.dedupeWrite(writeKey, async () => {
-            if (this.storageMode !== STORAGE_MODES.LOCAL) {
+            if (this.canUseFirebase(uid)) {
                 try {
-                    const data = await this.request('/api/users/save-ai-history', {
-                        method: 'POST',
-                        body: { email: normalizedEmail, question: safeQuestion, answer: safeAnswer }
+                    const record = await this.ensureFirebaseUser(uid, normalizedEmail);
+                    const nextHistory = [entry, ...(Array.isArray(record.user.aiHistory) ? record.user.aiHistory : [])].slice(0, 50);
+                    await updateDoc(record.ref, {
+                        aiHistory: nextHistory,
+                        updatedAt: new Date()
                     });
-                    this.setStorageMode(STORAGE_MODES.MONGO);
+
+                    this.setStorageMode(STORAGE_MODES.FIREBASE);
                     this.saveLocalAIHistory(normalizedEmail, entry);
-                    return { ok: true, source: data?.source || 'mongodb', storageMode: STORAGE_MODES.MONGO };
+                    return { ok: true, source: 'firebase', storageMode: STORAGE_MODES.FIREBASE };
                 } catch (error) {
-                    if (!this.shouldFallback(error)) return { ok: false, error: error?.message || 'Failed to save AI history', source: 'mongo', storageMode: STORAGE_MODES.MONGO };
+                    if (!this.shouldFallback(error)) return { ok: false, error: error?.message || 'Failed to save AI history', source: 'firebase', storageMode: STORAGE_MODES.FIREBASE };
                     this.setStorageMode(STORAGE_MODES.LOCAL);
                 }
+            } else if (this.storageMode !== STORAGE_MODES.LOCAL) {
+                this.setStorageMode(STORAGE_MODES.LOCAL);
             }
 
             this.saveLocalAIHistory(normalizedEmail, entry);
@@ -462,30 +662,39 @@ class StorageService {
     }
 
     async addXP({ email, amount }) {
-        const normalizedEmail = String(email || '').trim().toLowerCase();
+        const { uid, email: normalizedEmail } = this.getAuthIdentity(email);
         const safeAmount = Number(amount);
         if (!normalizedEmail || !Number.isFinite(safeAmount) || safeAmount <= 0) {
             return { ok: false, source: 'local', storageMode: this.storageMode };
         }
 
-        const writeKey = `addXP:${normalizedEmail}:${safeAmount}`;
+        const writeKey = `addXP:${uid || 'local'}:${normalizedEmail}:${safeAmount}`;
         return this.dedupeWrite(writeKey, async () => {
-            if (this.storageMode !== STORAGE_MODES.LOCAL) {
+            if (this.canUseFirebase(uid)) {
                 try {
-                    const data = await this.request('/api/users/add-xp', {
-                        method: 'POST',
-                        body: { email: normalizedEmail, amount: safeAmount }
+                    const record = await this.ensureFirebaseUser(uid, normalizedEmail);
+                    const currentXP = Number(record.user.xp) || 0;
+                    const nextXP = currentXP + safeAmount;
+                    const nextLevel = Math.floor(nextXP / 100) + 1;
+
+                    await updateDoc(record.ref, {
+                        xp: nextXP,
+                        level: nextLevel,
+                        updatedAt: new Date()
                     });
-                    this.setStorageMode(STORAGE_MODES.MONGO);
+
+                    this.setStorageMode(STORAGE_MODES.FIREBASE);
                     const localUser = this.saveLocalUserRecord(normalizedEmail, {
-                        xp: Number(data?.xp) || 0,
-                        level: Number(data?.level) || 1
+                        xp: nextXP,
+                        level: nextLevel
                     });
-                    return { ok: true, source: data?.source || 'mongodb', storageMode: STORAGE_MODES.MONGO, user: localUser };
+                    return { ok: true, source: 'firebase', storageMode: STORAGE_MODES.FIREBASE, user: localUser };
                 } catch (error) {
-                    if (!this.shouldFallback(error)) return { ok: false, error: error?.message || 'Failed to add XP', source: 'mongo', storageMode: STORAGE_MODES.MONGO };
+                    if (!this.shouldFallback(error)) return { ok: false, error: error?.message || 'Failed to add XP', source: 'firebase', storageMode: STORAGE_MODES.FIREBASE };
                     this.setStorageMode(STORAGE_MODES.LOCAL);
                 }
+            } else if (this.storageMode !== STORAGE_MODES.LOCAL) {
+                this.setStorageMode(STORAGE_MODES.LOCAL);
             }
 
             const localUser = this.mergeLocalUser(normalizedEmail) || this.saveLocalUserRecord(normalizedEmail, {});
@@ -497,20 +706,22 @@ class StorageService {
     }
 
     async getExperiments(email) {
-        const normalizedEmail = String(email || '').trim().toLowerCase();
+        const { uid, email: normalizedEmail } = this.getAuthIdentity(email);
         if (!normalizedEmail) return { experiments: [], source: 'local', storageMode: this.storageMode };
 
-        if (this.storageMode !== STORAGE_MODES.LOCAL) {
+        if (this.canUseFirebase(uid)) {
             try {
-                const data = await this.request(`/api/users/get-experiments?email=${encodeURIComponent(normalizedEmail)}`);
-                const experiments = Array.isArray(data?.experiments) ? data.experiments : [];
-                this.setStorageMode(STORAGE_MODES.MONGO);
+                const record = await this.loadFirebaseUser(uid, normalizedEmail);
+                const experiments = Array.isArray(record?.user?.experiments) ? record.user.experiments : [];
+                this.setStorageMode(STORAGE_MODES.FIREBASE);
                 this.saveLocalExperiments(normalizedEmail, experiments);
-                return { experiments, source: data?.source || 'mongodb', storageMode: STORAGE_MODES.MONGO };
+                return { experiments, source: 'firebase', storageMode: STORAGE_MODES.FIREBASE };
             } catch (error) {
                 if (!this.shouldFallback(error)) throw new Error(error?.message || 'Failed to load experiments');
                 this.setStorageMode(STORAGE_MODES.LOCAL);
             }
+        } else if (this.storageMode !== STORAGE_MODES.LOCAL) {
+            this.setStorageMode(STORAGE_MODES.LOCAL);
         }
 
         const experimentsMap = this.readMap(LOCAL_KEYS.experiments);
@@ -519,26 +730,31 @@ class StorageService {
     }
 
     async saveExperiment({ email, experiment }) {
-        const normalizedEmail = String(email || '').trim().toLowerCase();
+        const { uid, email: normalizedEmail } = this.getAuthIdentity(email);
         if (!normalizedEmail || !experiment || typeof experiment !== 'object') {
             return { ok: false, source: 'local', storageMode: this.storageMode };
         }
 
-        const writeKey = `saveExperiment:${normalizedEmail}:${JSON.stringify(experiment || {})}`;
+        const writeKey = `saveExperiment:${uid || 'local'}:${normalizedEmail}:${JSON.stringify(experiment || {})}`;
         return this.dedupeWrite(writeKey, async () => {
-            if (this.storageMode !== STORAGE_MODES.LOCAL) {
+            if (this.canUseFirebase(uid)) {
                 try {
-                    const data = await this.request('/api/users/save-experiment', {
-                        method: 'POST',
-                        body: { email: normalizedEmail, experiment }
+                    const record = await this.ensureFirebaseUser(uid, normalizedEmail);
+                    const nextExperiments = upsertExperiment(record.user.experiments, experiment);
+                    await updateDoc(record.ref, {
+                        experiments: nextExperiments,
+                        updatedAt: new Date()
                     });
-                    this.setStorageMode(STORAGE_MODES.MONGO);
+
+                    this.setStorageMode(STORAGE_MODES.FIREBASE);
                     this.upsertLocalExperiment(normalizedEmail, experiment);
-                    return { ok: true, source: data?.source || 'mongodb', storageMode: STORAGE_MODES.MONGO };
+                    return { ok: true, source: 'firebase', storageMode: STORAGE_MODES.FIREBASE };
                 } catch (error) {
-                    if (!this.shouldFallback(error)) return { ok: false, error: error?.message || 'Failed to save experiment', source: 'mongo', storageMode: STORAGE_MODES.MONGO };
+                    if (!this.shouldFallback(error)) return { ok: false, error: error?.message || 'Failed to save experiment', source: 'firebase', storageMode: STORAGE_MODES.FIREBASE };
                     this.setStorageMode(STORAGE_MODES.LOCAL);
                 }
+            } else if (this.storageMode !== STORAGE_MODES.LOCAL) {
+                this.setStorageMode(STORAGE_MODES.LOCAL);
             }
 
             this.upsertLocalExperiment(normalizedEmail, experiment);
@@ -547,26 +763,38 @@ class StorageService {
     }
 
     async updateExperimentProgress({ email, experimentId, progress }) {
-        const normalizedEmail = String(email || '').trim().toLowerCase();
+        const { uid, email: normalizedEmail } = this.getAuthIdentity(email);
         if (!normalizedEmail || !experimentId) {
             return { ok: false, source: 'local', storageMode: this.storageMode };
         }
 
-        const writeKey = `saveExperimentProgress:${normalizedEmail}:${experimentId}:${JSON.stringify(progress || {})}`;
+        const writeKey = `saveExperimentProgress:${uid || 'local'}:${normalizedEmail}:${experimentId}:${JSON.stringify(progress || {})}`;
         return this.dedupeWrite(writeKey, async () => {
-            if (this.storageMode !== STORAGE_MODES.LOCAL) {
+            if (this.canUseFirebase(uid)) {
                 try {
-                    const data = await this.request('/api/users/update-experiment-progress', {
-                        method: 'PATCH',
-                        body: { email: normalizedEmail, experimentId, progress }
+                    const record = await this.ensureFirebaseUser(uid, normalizedEmail);
+                    const nextExperiments = upsertExperiment(record.user.experiments, {
+                        id: experimentId,
+                        progress: {
+                            ...(record.user.experiments?.find((item) => item?.id === experimentId)?.progress || {}),
+                            ...(progress || {})
+                        }
                     });
-                    this.setStorageMode(STORAGE_MODES.MONGO);
+
+                    await updateDoc(record.ref, {
+                        experiments: nextExperiments,
+                        updatedAt: new Date()
+                    });
+
+                    this.setStorageMode(STORAGE_MODES.FIREBASE);
                     this.updateLocalExperimentProgress(normalizedEmail, experimentId, progress);
-                    return { ok: true, source: data?.source || 'mongodb', storageMode: STORAGE_MODES.MONGO };
+                    return { ok: true, source: 'firebase', storageMode: STORAGE_MODES.FIREBASE };
                 } catch (error) {
-                    if (!this.shouldFallback(error)) return { ok: false, error: error?.message || 'Failed to save progress', source: 'mongo', storageMode: STORAGE_MODES.MONGO };
+                    if (!this.shouldFallback(error)) return { ok: false, error: error?.message || 'Failed to save progress', source: 'firebase', storageMode: STORAGE_MODES.FIREBASE };
                     this.setStorageMode(STORAGE_MODES.LOCAL);
                 }
+            } else if (this.storageMode !== STORAGE_MODES.LOCAL) {
+                this.setStorageMode(STORAGE_MODES.LOCAL);
             }
 
             this.updateLocalExperimentProgress(normalizedEmail, experimentId, progress);
@@ -575,10 +803,10 @@ class StorageService {
     }
 
     clearUser(email) {
-        const normalizedEmail = String(email || '').trim().toLowerCase();
+        const normalizedEmail = normalizeEmail(email);
         if (!normalizedEmail) {
             Object.values(LOCAL_KEYS).forEach((key) => safeLocalStorage.removeItem(key));
-            this.setStorageMode(STORAGE_MODES.MONGO);
+            this.setStorageMode(STORAGE_MODES.FIREBASE);
             return;
         }
 

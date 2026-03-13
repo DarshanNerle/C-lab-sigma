@@ -21,6 +21,7 @@ import QuizOverlay from './components/quiz/QuizOverlay'
 import FloatingAIButton from './components/teaching/FloatingAIButton'
 import ExperimentLab from './pages/ExperimentLab'
 import AppShell from './components/layout/AppShell'
+import History from './pages/History'
 import { soundManager } from './utils/soundManager'
 import useThemeStore from './store/useThemeStore'
 import useAuthStore from './store/useAuthStore'
@@ -196,6 +197,7 @@ function App() {
                     <Route path="/profile" element={<Profile />} />
                     <Route path="/profile/edit" element={<EditProfile />} />
                     <Route path="/leaderboard" element={<LeaderboardPage />} />
+                    <Route path="/history" element={<History />} />
                     <Route path="/skills" element={<SkillTree />} />
                 </Route>
             </Routes>

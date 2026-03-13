@@ -6,10 +6,10 @@ const useAuthStore = create((set) => ({
     isLoading: true,
     dbSource: 'unknown',
     isDbDegraded: false,
-    storageMode: 'mongo',
+    storageMode: 'firebase',
     isLocalMode: false,
 
-    setUser: (user, profileData = null, dbSource = 'unknown', storageMode = 'mongo') => set({
+    setUser: (user, profileData = null, dbSource = 'unknown', storageMode = 'firebase') => set({
         user,
         profile: profileData,
         isAuthenticated: !!user,
@@ -18,12 +18,12 @@ const useAuthStore = create((set) => ({
         isAdmin: profileData?.role === 'admin',
         dbSource,
         isDbDegraded: dbSource === 'memory',
-        storageMode: storageMode === 'local' ? 'local' : 'mongo',
+        storageMode: storageMode === 'local' ? 'local' : 'firebase',
         isLocalMode: storageMode === 'local',
         isLoading: false
     }),
-    setStorageMode: (storageMode = 'mongo') => set({
-        storageMode: storageMode === 'local' ? 'local' : 'mongo',
+    setStorageMode: (storageMode = 'firebase') => set({
+        storageMode: storageMode === 'local' ? 'local' : 'firebase',
         isLocalMode: storageMode === 'local'
     }),
 
@@ -36,7 +36,7 @@ const useAuthStore = create((set) => ({
         isAdmin: false,
         dbSource: 'unknown',
         isDbDegraded: false,
-        storageMode: 'mongo',
+        storageMode: 'firebase',
         isLocalMode: false,
         isLoading: false
     })
