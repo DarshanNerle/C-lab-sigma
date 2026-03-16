@@ -14,11 +14,13 @@ import TeacherDashboard from './pages/teaching/TeacherDashboard'
 import VirtualLab2D from './pages/VirtualLab2D'
 import SkillTree from './pages/SkillTree'
 import LearnMore from './pages/LearnMore'
+import ScientificCalculator from './pages/ScientificCalculator'
 import LabReport from './components/reports/LabReport'
 import AIChemistryMaster from './pages/AIChemistryMaster'
 import LabNotebook from './components/notebook/LabNotebook'
 import QuizOverlay from './components/quiz/QuizOverlay'
 import FloatingAIButton from './components/teaching/FloatingAIButton'
+import FloatingCalculatorButton from './components/tools/FloatingCalculatorButton'
 import ExperimentLab from './pages/ExperimentLab'
 import AppShell from './components/layout/AppShell'
 import History from './pages/History'
@@ -194,6 +196,7 @@ function App() {
                 <Route element={<AppShell />}>
                     <Route path="/dashboard" element={<Dashboard />} />
                     <Route path="/learn-more" element={<LearnMore />} />
+                    <Route path="/calculator" element={<ScientificCalculator />} />
                     <Route path="/profile" element={<Profile />} />
                     <Route path="/profile/edit" element={<EditProfile />} />
                     <Route path="/leaderboard" element={<LeaderboardPage />} />
@@ -201,6 +204,7 @@ function App() {
                     <Route path="/skills" element={<SkillTree />} />
                 </Route>
             </Routes>
+            <FloatingCalculatorButton />
             {!isImmersiveLabRoute && <FloatingAIButton />}
         </div>
     )

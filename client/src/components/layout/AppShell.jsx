@@ -7,6 +7,7 @@ import {
     ChevronLeft,
     ChevronRight,
     Command,
+    Calculator,
     FlaskConical,
     Home,
     GraduationCap,
@@ -28,6 +29,7 @@ const primaryNav = [
     { label: '3D Lab', to: '/lab', icon: FlaskConical, shortcut: 'L' },
     { label: 'Experiment Lab', to: '/experiment-lab', icon: FlaskConical, shortcut: 'E' },
     { label: 'Learn More', to: '/learn-more', icon: GraduationCap, shortcut: 'M' },
+    { label: 'Calculator', to: '/calculator', icon: Calculator, shortcut: '' },
     { label: 'AI Chat', to: '/ai-chemistry-master', icon: Bot, shortcut: 'A' },
     { label: 'Experiments', to: '/experiments', icon: Command, shortcut: 'Ctrl+K' },
     { label: 'Experiment History', to: '/history', icon: NotebookPen, shortcut: '' },
@@ -37,6 +39,15 @@ const primaryNav = [
 const sidebarItems = [
     ...primaryNav,
     { label: 'Profile', to: '/profile', icon: User, shortcut: '' }
+];
+
+const mobileNavItems = [
+    primaryNav[0],
+    primaryNav[1],
+    primaryNav[2],
+    primaryNav[3],
+    primaryNav[4],
+    primaryNav[6]
 ];
 
 function ShellNavLink({ item, compact = false, onClick }) {
@@ -269,7 +280,7 @@ export default function AppShell() {
             </div>
 
             <nav className="fixed inset-x-3 bottom-3 z-[130] grid grid-cols-6 gap-2 rounded-2xl border border-white/15 bg-slate-950/90 p-2 backdrop-blur-xl md:hidden">
-                {primaryNav.slice(0, 6).map((item) => {
+                {mobileNavItems.map((item) => {
                     const Icon = item.icon;
                     const active = location.pathname === item.to;
                     return (
