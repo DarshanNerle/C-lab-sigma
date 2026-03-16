@@ -1,4 +1,4 @@
-
+﻿
 import React, { useMemo, useState } from 'react';
 import { Calculator, X } from 'lucide-react';
 
@@ -135,7 +135,7 @@ function formatDms(deg) {
     remaining = (remaining - d) * 60;
     const m = Math.floor(remaining);
     const s = (remaining - m) * 60;
-    return `${sign}${d}�${m}'${s.toFixed(2)}"`;
+    return `${sign}${d}°${m}'${s.toFixed(2)}"`;
 }
 
 function formatScientific(value, digits = 6) {
@@ -390,6 +390,133 @@ function evaluateRpn(rpn, functionDefs) {
     }
     if (stack.length !== 1) throw new Error('Invalid expression');
     return stack[0];
+}
+
+function evaluateExpression(expression, angleMode, ansValue, memoryValue, extraConstants = {}, extraFunctionDefs = {}) {
+    const normalized = expression
+        .replace(/×/g, '*')
+        .replace(/÷/g, '/')
+        .replace(/[−–]/g, '-')
+        .replace(/π/gi, 'pi')
+        .replace(/√/g, 'sqrt')
+        .replace(/\s+/g, '');
+    if (!normalized) return 0;
+
+    const toRadians = (value) => {
+        if (angleMode === ANGLE_MODES.DEG) return (value * Math.PI) / 180;
+        if (angleMode === ANGLE_MODES.GRAD) return (value * Math.PI) / 200;
+        return value;
+    };
+    const fromRadians = (value) => {
+        if (angleMode === ANGLE_MODES.DEG) return (value * 180) / Math.PI;
+        if (angleMode === ANGLE_MODES.GRAD) return (value * 200) / Math.PI;
+        return value;
+    };
+
+    const functionDefs = {
+        sin: { arity: 1, fn: (value) => Math.sin(toRadians(value)) },
+        cos: { arity: 1, fn: (value) => Math.cos(toRadians(value)) },
+        tan: { arity: 1, fn: (value) => Math.tan(toRadians(value)) },
+        asin: { arity: 1, fn: (value) => fromRadians(Math.asin(value)) },
+        acos: { arity: 1, fn: (value) => fromRadians(Math.acos(value)) },
+        atan: { arity: 1, fn: (value) => fromRadians(Math.atan(value)) },
+        sinh: { arity: 1, fn: (value) => Math.sinh(value) },
+        cosh: { arity: 1, fn: (value) => Math.cosh(value) },
+        tanh: { arity: 1, fn: (value) => Math.tanh(value) },
+        asinh: { arity: 1, fn: (value) => Math.asinh(value) },
+        acosh: { arity: 1, fn: (value) => Math.acosh(value) },
+        atanh: { arity: 1, fn: (value) => Math.atanh(value) },
+        log: {
+            arity: 1,
+            fn: (...args) => (args.length === 2 ? Math.log(args[1]) / Math.log(args[0]) : Math.log10(args[0]))
+        },
+        ln: { arity: 1, fn: (value) => Math.log(value) },
+        sqrt: { arity: 1, fn: (value) => Math.sqrt(value) },
+        abs: { arity: 1, fn: (value) => Math.abs(value) },
+        exp: { arity: 1, fn: (value) => Math.exp(value) },
+        floor: { arity: 1, fn: (value) => Math.floor(value) },
+        ceil: { arity: 1, fn: (value) => Math.ceil(value) },
+        round: { arity: 1, fn: (value) => Math.round(value) },
+        ncr: { arity: 2, fn: (n, r) => combination(n, r) },
+        npr: { arity: 2, fn: (n, r) => permutation(n, r) },
+        gcd: { arity: 2, fn: (a, b) => gcdCalc(a, b) },
+        lcm: { arity: 2, fn: (a, b) => lcmCalc(a, b) },
+        mod: { arity: 2, fn: (a, b) => ((a % b) + b) % b },
+        root: { arity: 2, fn: (x, y) => Math.pow(y, 1 / x) },
+        deg: { arity: 1, fn: (value) => (value * 180) / Math.PI },
+        rad: { arity: 1, fn: (value) => (value * Math.PI) / 180 },
+        grad: { arity: 1, fn: (value) => (value * 200) / 180 },
+        dms: { arity: 3, fn: (d, m, s) => d + m / 60 + s / 3600 },
+        todms: { arity: 1, fn: (value) => createDisplayValue(value, formatDms(value)) },
+        sci: { arity: 1, fn: (value) => createDisplayValue(value, formatScientific(value)) },
+        eng: { arity: 1, fn: (value) => createDisplayValue(value, formatEngineering(value)) },
+        engshift: { arity: 2, fn: (value, shift) => createDisplayValue(value, formatEngineering(value, shift)) },
+        frac: {
+            arity: 2,
+            fn: (a, b) => createDisplayValue(a / b, formatFraction(a, b))
+        },
+        mix: {
+            arity: 3,
+            fn: (a, b, c) => createDisplayValue(a + b / c, `${toInteger(a)} ${formatFraction(b, c)}`)
+        },
+        improper: {
+            arity: 3,
+            fn: (a, b, c) => createDisplayValue(a + b / c, formatFraction(toInteger(a) * toInteger(c) + toInteger(b), c))
+        },
+        tofrac: {
+            arity: 1,
+            fn: (value) => {
+                const frac = approximateFraction(value);
+                if (!frac) return NaN;
+                return createDisplayValue(value, formatFraction(frac.numerator, frac.denominator));
+            }
+        },
+        todec: { arity: 2, fn: (a, b) => a / b },
+        rand: { arity: 0, fn: () => Math.random() },
+        ran: { arity: 0, fn: () => Math.random() },
+        randint: {
+            arity: 2,
+            fn: (min, max) => {
+                const lo = Math.ceil(Math.min(min, max));
+                const hi = Math.floor(Math.max(min, max));
+                return Math.floor(Math.random() * (hi - lo + 1)) + lo;
+            }
+        },
+        polr: { arity: 2, fn: (x, y) => Math.hypot(x, y) },
+        polt: { arity: 2, fn: (x, y) => fromRadians(Math.atan2(y, x)) },
+        pol: {
+            arity: 2,
+            fn: (x, y) => {
+                const r = Math.hypot(x, y);
+                const theta = fromRadians(Math.atan2(y, x));
+                return createDisplayValue(r, `${r.toFixed(6)}, ${theta.toFixed(6)}`);
+            }
+        },
+        recx: { arity: 2, fn: (r, theta) => r * Math.cos(toRadians(theta)) },
+        recy: { arity: 2, fn: (r, theta) => r * Math.sin(toRadians(theta)) },
+        rec: {
+            arity: 2,
+            fn: (r, theta) => {
+                const x = r * Math.cos(toRadians(theta));
+                const y = r * Math.sin(toRadians(theta));
+                return createDisplayValue(x, `${x.toFixed(6)}, ${y.toFixed(6)}`);
+            }
+        },
+        int: { arity: 1, fn: (value) => toInteger(value) },
+        prime: { arity: 1, fn: (value) => createDisplayValue(value, primeFactorization(value)) }
+    };
+
+    const constants = {
+        pi: Math.PI,
+        e: Math.E,
+        ans: ansValue,
+        m: memoryValue,
+        ...extraConstants
+    };
+
+    const tokens = tokenize(normalized);
+    const rpn = toRpn(tokens, constants, { ...functionDefs, ...extraFunctionDefs });
+    return evaluateRpn(rpn, { ...functionDefs, ...extraFunctionDefs });
 }
 
     const constants = {
@@ -1063,3 +1190,24 @@ export default function ScientificCalculatorPanel({ compact = false, onClose }) 
                     {displayResult}
                 </div>
             </div>
+            <div className="mt-3 grid grid-cols-6 gap-2 text-sm">
+                {baseButtons.map((row, rowIndex) =>
+                    row.map((button, index) => {
+                        const tone = getButtonTone(button.type, button.action);
+                        const label = button.action === 'toggle-angle' ? angleMode : button.label;
+                        return (
+                            <button
+                                key={`${rowIndex}-${index}-${label}`}
+                                type="button"
+                                onClick={() => handleButton(button)}
+                                className={`h-10 rounded-xl border border-white/10 px-1 font-semibold transition ${tone}`}
+                            >
+                                {label}
+                            </button>
+                        );
+                    })
+                )}
+            </div>
+        </div>
+    );
+}
