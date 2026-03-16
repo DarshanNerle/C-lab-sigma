@@ -1,4 +1,4 @@
-﻿
+
 import React, { useMemo, useState } from 'react';
 import { Calculator, X } from 'lucide-react';
 
@@ -506,18 +506,6 @@ function evaluateExpression(expression, angleMode, ansValue, memoryValue, extraC
         prime: { arity: 1, fn: (value) => createDisplayValue(value, primeFactorization(value)) }
     };
 
-    const constants = {
-        pi: Math.PI,
-        e: Math.E,
-        ans: ansValue,
-        m: memoryValue,
-        ...extraConstants
-    };
-
-    const tokens = tokenize(normalized);
-    const rpn = toRpn(tokens, constants, { ...functionDefs, ...extraFunctionDefs });
-    return evaluateRpn(rpn, { ...functionDefs, ...extraFunctionDefs });
-}
 
     const constants = {
         pi: Math.PI,
