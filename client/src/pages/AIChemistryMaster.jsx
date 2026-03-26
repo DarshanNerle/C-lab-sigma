@@ -96,13 +96,47 @@ const AIChemistryMaster = () => {
 
     const speakResponse = async (text) => {
         if (!voiceEnabled) return;
+        if (!voiceManager.isSupported?.()) {
+            setErrorText('Voice output is not supported in this browser.');
+            return;
+        }
         const plain = String(text || '').replace(/[#>*_`]/g, ' ').replace(/\s+/g, ' ').trim();
         if (!plain) return;
         voiceManager.setRate(speechRate);
         voiceManager.setPitch(speechPitch);
         voiceManager.setVoice(selectedVoice);
         voiceManager.setVoiceByGender(voiceGender);
-        voiceManager.speak(plain);
+        const ok = voiceManager.speak(plain);
+        if (!ok) setErrorText('Voice output was blocked. Toggle Voice ON to unlock.');
+    };
+
+    const handleVoiceToggle = () => {
+        const nextEnabled = !voiceEnabled;
+        toggleVoice();
+
+        if (!nextEnabled) {
+            stopSpeaking();
+            return;
+        }
+
+        if (!voiceManager.isSupported?.()) {
+            setErrorText('Voice output is not supported in this browser.');
+            return;
+        }
+
+        try {
+            voiceManager.ensureVoiceLoading?.();
+            if (window.speechSynthesis?.paused) {
+                window.speechSynthesis.resume();
+            }
+            voiceManager.setRate(speechRate);
+            voiceManager.setPitch(speechPitch);
+            voiceManager.setVoice(selectedVoice);
+            voiceManager.setVoiceByGender(voiceGender);
+            voiceManager.speakImmediate?.('Voice enabled. You will hear AI responses now.');
+        } catch (err) {
+            setErrorText(err?.message || 'Unable to start voice output.');
+        }
     };
 
     const stopSpeaking = () => {
@@ -565,7 +599,7 @@ const AIChemistryMaster = () => {
                     <div className="max-w-4xl mx-auto mt-3 flex items-center gap-2">
                         <button
                             type="button"
-                            onClick={toggleVoice}
+                            onClick={handleVoiceToggle}
                             className={`text-[11px] px-3 py-1.5 rounded-lg border ${voiceEnabled ? 'text-emerald-300 border-emerald-500/40 bg-emerald-500/10' : 'text-slate-400 border-slate-700 bg-slate-800/60'}`}
                         >
                             <Volume2 className="w-3.5 h-3.5 inline mr-1" />

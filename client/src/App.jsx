@@ -186,6 +186,7 @@ function App() {
                 <Route path="/login" element={<Login />} />
                 <Route path="/register" element={<Register />} />
                 <Route path="/lab" element={<VirtualLab />} />
+                <Route path="/lab3d" element={<VirtualLab />} />
                 <Route path="/lab2d" element={<VirtualLab2D />} />
                 <Route path="/experiments" element={<Experiments />} />
                 <Route path="/experiment-lab" element={<ExperimentLab />} />

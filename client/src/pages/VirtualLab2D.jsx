@@ -21,6 +21,7 @@ import useAuthStore from '../store/useAuthStore';
 import ProfileDropdown from '../components/ui/ProfileDropdown';
 import { logoutUser } from '../firebase/auth';
 import LabAnalyticsPanel from '../components/lab2D/LabAnalyticsPanel';
+import LabSessionController from '../components/lab2D/LabSessionController';
 import LabEnhancementsHUD from '../components/ui/LabEnhancementsHUD';
 import {
     FlaskConical, RefreshCw, Database, ArrowLeft, Book, X,
@@ -122,11 +123,11 @@ export default function VirtualLab2D() {
         }
         setDraggedSource(null);
     };
-    const handleBuretteDrop = (id) => {
+    const handleBuretteDrop = (id, amount = 0.5) => {
         const target = selectedContainer.startsWith('flask') || selectedContainer.startsWith('beaker')
             ? selectedContainer : 'flask1';
         if (target !== id) {
-            pour(id, target, 0.5); // 0.5mL per drop for precision
+            pour(id, target, amount); // Respect the drop volume
         }
     };
     const toggleBuretteValve = (id) => {
@@ -318,6 +319,21 @@ export default function VirtualLab2D() {
                         >
                             Titration Lab
                         </button>
+                    </div>
+
+                    {/* ── LAB SESSION CONTROLLER (Like Google Cloud / Qwiklabs) ── */}
+                    <div className="hidden lg:flex items-center px-6 border-l border-white/10">
+                        <LabSessionController
+                            onStart={() => resetLab()}
+                            onEnd={(results) => {
+                                console.log('Lab session ended:', results);
+                                addXP(150); // Award XP for completing the session
+                                if (currentLesson) handleExperimentComplete();
+                                else resetLab();
+                            }}
+                            labName={currentLesson?.title || "Reaction Matrix Lab"}
+                            durationMinutes={45}
+                        />
                     </div>
                 </div>
 
@@ -769,7 +785,7 @@ export default function VirtualLab2D() {
                                         <div
                                             className={`relative p-2 rounded-2xl transition-all duration-300 ${selectedContainer === 'burette1' ? 'bg-white/5 ring-1 ring-neon-cyan/50' : 'hover:bg-white/[0.02]'}`}
                                         >
-                                            <Burette2D id="burette1" onValveChange={() => toggleBuretteValve('burette1')} onDrop={() => handleBuretteDrop('burette1')} />
+                                            <Burette2D id="burette1" onValveChange={() => toggleBuretteValve('burette1')} onDrop={(amt) => handleBuretteDrop('burette1', amt)} />
                                             <div className="absolute inset-0 cursor-move" draggable onDragStart={(e) => handleDragStart(e, 'burette1')} onDragOver={handleDragOver} onDrop={(e) => handleDrop(e, 'burette1')} />
                                         </div>
                                     </div>

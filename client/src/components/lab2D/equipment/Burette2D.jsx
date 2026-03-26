@@ -163,11 +163,14 @@ export default function Burette2D({
 
             {/* Valve handle control */}
             <button
-                onClick={onValveChange}
-                className="absolute"
+                onClick={(e) => {
+                    e.stopPropagation();
+                    onValveChange();
+                }}
+                className="absolute z-[110] cursor-pointer"
                 style={{ top: height - 35, right: -15 }}
             >
-                <div className={`w-10 h-3 rounded-full transition-transform duration-300 ${isOpen ? 'bg-neon-green rotate-90' : 'bg-red-500 hover:bg-red-400 rotate-0 border border-white/50'}`} style={{ boxShadow: '0 0 10px rgba(255,0,0,0.5)' }}></div>
+                <div className={`w-10 h-3 rounded-full transition-transform duration-300 ${isOpen ? 'bg-neon-green rotate-90' : 'bg-red-500 hover:bg-red-400 rotate-0 border border-white/50'}`} style={{ boxShadow: isOpen ? '0 0 15px rgba(34,211,238,0.6)' : '0 0 10px rgba(255,0,0,0.5)' }}></div>
             </button>
 
             <div className="mt-24 text-[10px] font-mono text-neon-cyan tracking-widest text-center px-2 py-1 bg-black/50 rounded">

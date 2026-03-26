@@ -30,6 +30,8 @@ import {
 import { useThemeContext } from '../context/ThemeContext';
 import useAuthStore from '../store/useAuthStore';
 import WorkspacePanel from '../components/experiment-lab/WorkspacePanel';
+import LabSessionController from '../components/lab2D/LabSessionController';
+import useGameStore from '../store/useGameStore';
 import {
   MAX_UPLOAD_SIZE_BYTES,
   normalizeUploadFileName,
@@ -647,6 +649,7 @@ function getEquipmentLabel(type) {
 export default function ExperimentLab() {
   const { theme, setTheme } = useThemeContext();
   const { user, profile } = useAuthStore((state) => ({ user: state.user, profile: state.profile }));
+  const { addXP } = useGameStore();
   const labShellRef = useRef(null);
   const [customExperiments, setCustomExperiments] = useState(() => loadCustomExperiments().map((item) => normalizeExperiment(item, 'custom')));
   const presetExperiments = useMemo(() => PRESET_EXPERIMENTS.map(createPresetExperiment), []);
@@ -677,10 +680,25 @@ export default function ExperimentLab() {
   const [uploadState, setUploadState] = useState({ name: '', status: '', error: '' });
   const [manualResultValue, setManualResultValue] = useState('');
   const [isFullscreen, setIsFullscreen] = useState(false);
+  const [autoVolumeCalc, setAutoVolumeCalc] = useState(true);
   const previousStepRef = useRef(-1);
   const previousWarningRef = useRef('');
   const experimentStartRef = useRef(Date.now());
   const savedHistoryRef = useRef(new Set());
+  const lastTabRef = useRef(activeTab);
+
+  // Auto-reset workspace when switching between Virtual Lab and Observation
+  useEffect(() => {
+    if (
+      (lastTabRef.current === 'virtual' && activeTab === 'observation') ||
+      (lastTabRef.current === 'observation' && activeTab === 'virtual')
+    ) {
+      setWorkspaceVersion((v) => v + 1);
+      pushNotification('Workspace Synced', 'Apparatus state was reset for data purity while switching to recording mode.', 'info', { minimized: true });
+    }
+    lastTabRef.current = activeTab;
+  }, [activeTab]);
+
 
   const selectedExperiment = useMemo(
     () => experiments.find((item) => item.id === selectedExperimentId) || experiments[0],
@@ -754,23 +772,27 @@ export default function ExperimentLab() {
     return { status: 'wrong', message: `Result does not match the calculated value. Error = ${errorPercent.toFixed(2)}%.`, errorPercent };
   }, [manualResultValue, result]);
 
+  const hasComputedResult = Number.isFinite(result.calculatedValue) || Number.isFinite(result.averageVolume);
+  const hasManualResult = manualResultValue !== '' && Number.isFinite(Number(manualResultValue)) && resultCheck.status !== 'pending';
+  const isExperimentCompleted = hasStarted && readings.length > 0 && hasComputedResult;
+
   useEffect(() => {
     if (!user?.uid || !selectedExperiment || !db) return;
-    if (!hasStarted || !manualResultValue || resultCheck.status === 'pending') return;
-    if (!readings.length) return;
+    if (!hasStarted || !readings.length || !hasComputedResult) return;
 
-    const saveKey = `${user.uid}:${selectedExperiment.id}:${manualResultValue}:${result.trialCount}`;
+    const avgVolume = Number.isFinite(result.averageVolume) ? result.averageVolume : null;
+    const calculatedValue = Number.isFinite(result.calculatedValue) ? result.calculatedValue : null;
+    const resultKey = calculatedValue !== null ? calculatedValue.toFixed(4) : avgVolume?.toFixed(2) || '0.00';
+    const saveKey = `${user.uid}:${selectedExperiment.id}:${result.trialCount}:${resultKey}`;
     if (savedHistoryRef.current.has(saveKey)) return;
 
     const persist = async () => {
-      const errorPercent = Number(resultCheck.errorPercent);
-      const accuracy = Number.isFinite(errorPercent) ? Math.max(0, Math.min(100, Math.round(100 - errorPercent))) : 0;
-      const score = accuracy;
-      const avgVolume = Number.isFinite(result.averageVolume) ? result.averageVolume : 0;
-      const calculatedValue = Number.isFinite(result.calculatedValue) ? result.calculatedValue : null;
+      const errorPercent = hasManualResult ? Number(resultCheck.errorPercent) : null;
+      const accuracy = Number.isFinite(errorPercent) ? Math.max(0, Math.min(100, Math.round(100 - errorPercent))) : null;
+      const score = Number.isFinite(accuracy) ? accuracy : 0;
       const resultSummary = calculatedValue !== null
-        ? `Calculated value: ${calculatedValue.toFixed(4)} (avg ${avgVolume.toFixed(2)} mL)`
-        : `Average volume: ${avgVolume.toFixed(2)} mL`;
+        ? `Calculated value: ${calculatedValue.toFixed(4)} (avg ${(avgVolume ?? 0).toFixed(2)} mL)`
+        : `Average volume: ${(avgVolume ?? 0).toFixed(2)} mL`;
       const observation = observationNote.trim() || autoObservations[0]?.text || 'No observation recorded.';
       const durationMinutes = Math.max(1, Math.round((Date.now() - experimentStartRef.current) / 60000));
       const userName = profile?.name || user?.displayName || user?.email?.split('@')[0] || 'Student';
@@ -783,15 +805,17 @@ export default function ExperimentLab() {
         instrumentsUsed: Array.isArray(requiredEquipment) && requiredEquipment.length
           ? requiredEquipment.map(getEquipmentLabel)
           : (Array.isArray(selectedExperiment.apparatus) ? selectedExperiment.apparatus : []),
-        result: manualResultValue ? `${resultSummary} | Manual: ${manualResultValue}` : resultSummary,
+        result: hasManualResult ? `${resultSummary} | Manual: ${manualResultValue}` : resultSummary,
         observation,
         score,
-        accuracy,
+        accuracy: Number.isFinite(accuracy) ? accuracy : null,
         completedAt: serverTimestamp(),
         duration: durationMinutes
       };
 
       await addDoc(collection(db, 'experiment_history'), historyPayload);
+
+      if (!hasManualResult) return;
 
       const leagueRef = doc(db, 'league_scores', user.uid);
       const leagueSnap = await getDoc(leagueRef);
@@ -818,13 +842,15 @@ export default function ExperimentLab() {
     persist().catch(() => {
       savedHistoryRef.current.delete(saveKey);
     });
-  }, [
-    autoObservations,
-    db,
-    hasStarted,
-    manualResultValue,
-    observationNote,
-    profile?.name,
+    }, [
+      autoObservations,
+      db,
+      hasComputedResult,
+      hasManualResult,
+      hasStarted,
+      manualResultValue,
+      observationNote,
+      profile?.name,
     readings.length,
     requiredEquipment,
     result.averageVolume,
@@ -1010,6 +1036,10 @@ export default function ExperimentLab() {
   }
 
   function renderInfoTab() {
+    const objectiveText = selectedExperiment?.aim
+      ? `Objective of performing this experiment: ${selectedExperiment.aim}`
+      : 'Objective of performing this experiment: validate the core principle, record precise readings, and compute a reliable final result.';
+
     return (
       <div className="lab-content-card">
         <div className="lab-content-head">
@@ -1025,6 +1055,14 @@ export default function ExperimentLab() {
         </div>
 
         <div className="lab-info-grid">
+          <section className="lab-panel-card">
+            <div className="lab-card-title">
+              <Sparkles className="w-4 h-4" />
+              <strong>Objective</strong>
+            </div>
+            <p>{objectiveText}</p>
+          </section>
+
           <section className="lab-panel-card">
             <div className="lab-card-title">
               <BookOpenText className="w-4 h-4" />
@@ -1385,29 +1423,88 @@ export default function ExperimentLab() {
   }
 
   function renderObservationTab() {
+    const numericFields = new Set(['initialReading', 'finalReading', 'volumeUsed', 'ph', 'conductivity', 'temperature']);
+    const observationColumns = [
+      { key: 'trial', label: 'Trial', type: 'text', readOnly: true, placeholder: '#' },
+      { key: 'initialReading', label: 'Initial (mL)', type: 'number', placeholder: '0.00' },
+      { key: 'finalReading', label: 'Final (mL)', type: 'number', placeholder: '0.00' },
+      { key: 'volumeUsed', label: 'Volume Used (mL)', type: 'number', placeholder: 'Auto' },
+      { key: 'ph', label: 'pH', type: 'number', placeholder: '7.00' },
+      { key: 'conductivity', label: 'Conductivity (mS/cm)', type: 'number', placeholder: '0.00' },
+      { key: 'temperature', label: 'Temp (C)', type: 'number', placeholder: '25' },
+      { key: 'notes', label: 'Observation Notes', type: 'text', placeholder: 'Color / endpoint...' }
+    ];
+
+    const isInvalidValue = (key, value) => {
+      if (!numericFields.has(key)) return false;
+      if (value === '' || value === null || value === undefined) return false;
+      return !Number.isFinite(Number(value));
+    };
+
+    const updateReading = (rowId, key, value) => {
+      setReadings((current) => current.map((item, index) => {
+        if (item.id !== rowId) return item;
+        const next = { ...item, [key]: value };
+        if (key === 'trial') {
+          next.trial = Number(value) || index + 1;
+        }
+        if (key === 'volumeUsed') {
+          next.volumeUsedManual = value !== '';
+        }
+        if (autoVolumeCalc && (key === 'initialReading' || key === 'finalReading')) {
+          const initial = Number(next.initialReading);
+          const final = Number(next.finalReading);
+          if (Number.isFinite(initial) && Number.isFinite(final) && !next.volumeUsedManual) {
+            const computed = Math.max(0, final - initial);
+            next.volumeUsed = computed ? computed.toFixed(2) : '0.00';
+          }
+        }
+        return next;
+      }));
+    };
+
     return (
       <div className="lab-content-card">
         <div className="lab-content-head">
           <div>
             <span className="lab-section-label">Observation</span>
-            <h2>Observation table</h2>
-            <p>Simulation values are auto-filled here, and students can edit them manually.</p>
+            <h2>Advanced observation table</h2>
+            <p>Enter your measured values here. These inputs are used for calculations and reports.</p>
           </div>
-          <button
-            type="button"
-            className="lab-secondary-button"
-            onClick={() => setReadings((current) => [...current, {
-              id: `${Date.now()}-manual`,
-              trial: current.length + 1,
-              initialReading: '',
-              finalReading: '',
-              volumeUsed: '',
-              ph: '',
-              conductivity: ''
-            }])}
-          >
-            <span>Add Row</span>
-          </button>
+          <div className="lab-observation-actions">
+            <button
+              type="button"
+              className="lab-secondary-button"
+              onClick={() => setReadings((current) => [...current, {
+                id: `${Date.now()}-manual`,
+                trial: current.length + 1,
+                initialReading: '',
+                finalReading: '',
+                volumeUsed: '',
+                ph: '',
+                conductivity: '',
+                temperature: '',
+                notes: '',
+                volumeUsedManual: false
+              }])}
+            >
+              <span>Add Row</span>
+            </button>
+            <button
+              type="button"
+              className="lab-secondary-button"
+              onClick={() => setAutoVolumeCalc((value) => !value)}
+            >
+              <span>{autoVolumeCalc ? 'Auto Volume: On' : 'Auto Volume: Off'}</span>
+            </button>
+            <button
+              type="button"
+              className="lab-secondary-button"
+              onClick={() => setReadings([])}
+            >
+              <span>Clear Table</span>
+            </button>
+          </div>
         </div>
 
         <div className="lab-observation-grid">
@@ -1417,38 +1514,39 @@ export default function ExperimentLab() {
               <strong>Observation Table</strong>
             </div>
             <div className="lab-table-wrap">
-              <table className="lab-record-table">
-                <thead>
-                  <tr>
-                    <th>Trial</th>
-                    <th>Initial Reading</th>
-                    <th>Final Reading</th>
-                    <th>Volume Used</th>
-                    <th>pH</th>
-                    <th>Conductivity</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {readings.map((row) => (
-                    <tr key={row.id}>
-                      {['trial', 'initialReading', 'finalReading', 'volumeUsed', 'ph', 'conductivity'].map((key) => (
-                        <td key={key}>
-                          <input
-                            value={row[key]}
-                            onChange={(event) => setReadings((current) => current.map((item) => (
-                              item.id === row.id ? { ...item, [key]: event.target.value } : item
-                            )))}
-                          />
-                        </td>
+                <table className="lab-record-table">
+                  <thead>
+                    <tr>
+                      {observationColumns.map((col) => (
+                        <th key={col.key}>{col.label}</th>
                       ))}
                     </tr>
-                  ))}
-                  {!readings.length && (
-                    <tr>
-                      <td colSpan="6" className="lab-empty-cell">Run the virtual experiment and log readings to populate this table.</td>
-                    </tr>
-                  )}
-                </tbody>
+                  </thead>
+                  <tbody>
+                    {readings.map((row, index) => (
+                      <tr key={row.id}>
+                        {observationColumns.map((col) => (
+                          <td key={col.key}>
+                            <input
+                              type={col.type}
+                              inputMode={col.type === 'number' ? 'decimal' : undefined}
+                              step={col.type === 'number' ? '0.01' : undefined}
+                              readOnly={col.readOnly}
+                              placeholder={col.placeholder}
+                              value={col.key === 'trial' ? (row[col.key] ?? index + 1) : (row[col.key] ?? '')}
+                              onChange={(event) => updateReading(row.id, col.key, event.target.value)}
+                              className={isInvalidValue(col.key, row[col.key]) ? 'lab-input-invalid' : undefined}
+                            />
+                          </td>
+                        ))}
+                      </tr>
+                    ))}
+                    {!readings.length && (
+                      <tr>
+                        <td colSpan={observationColumns.length} className="lab-empty-cell">Add rows and enter your observation values to populate this table.</td>
+                      </tr>
+                    )}
+                  </tbody>
               </table>
             </div>
           </section>
@@ -1476,7 +1574,6 @@ export default function ExperimentLab() {
       </div>
     );
   }
-
   function renderResultTab() {
     return (
       <div className="lab-content-card">
@@ -1559,18 +1656,67 @@ export default function ExperimentLab() {
               </div>
             </div>
           </section>
+
+          <section className="lab-panel-card lab-wide-card">
+            <div className="lab-card-title">
+              <WandSparkles className="w-4 h-4" />
+              <strong>Feedback, Suggestions, and SaaS Readiness</strong>
+            </div>
+            {isExperimentCompleted ? (
+              <>
+                <p className="lab-muted">Great job completing the experiment. Here is feedback plus SaaS-level suggestions to elevate this experience.</p>
+                <div className="lab-status-grid">
+                  <article>
+                    <span>Feedback</span>
+                    <strong>Your experiment flow is consistent.</strong>
+                    <p className="lab-muted">Observations, calculation, and verification were completed in the right sequence.</p>
+                  </article>
+                  <article>
+                    <span>Suggestion</span>
+                    <strong>Show progress checkpoints.</strong>
+                    <p className="lab-muted">Add visible checkpoints for setup, readings, and result validation to keep learners on track.</p>
+                  </article>
+                  <article>
+                    <span>SaaS Upgrade</span>
+                    <strong>Team workspaces and roles.</strong>
+                    <p className="lab-muted">Enable instructors, students, and reviewers with role-based access and shared lab templates.</p>
+                  </article>
+                  <article>
+                    <span>SaaS Upgrade</span>
+                    <strong>Analytics and reporting.</strong>
+                    <p className="lab-muted">Add cohort dashboards, experiment completion trends, and exportable reports for admins.</p>
+                  </article>
+                  <article>
+                    <span>Additional</span>
+                    <strong>Integrations and billing.</strong>
+                    <p className="lab-muted">Support SSO, LMS/LTI, and subscription plans with usage-based limits.</p>
+                  </article>
+                  <article>
+                    <span>Additional</span>
+                    <strong>Audit and compliance.</strong>
+                    <p className="lab-muted">Provide audit logs, data retention controls, and secure sharing for institutions.</p>
+                  </article>
+                </div>
+              </>
+            ) : (
+              <p className="lab-muted">Finish the experiment and enter a manual result to unlock feedback and SaaS suggestions.</p>
+            )}
+          </section>
         </div>
       </div>
     );
   }
 
   function renderCenterContent() {
-    if (activeTab === 'info') return renderInfoTab();
-    if (activeTab === 'apparatus') return renderApparatusTab();
-    if (activeTab === 'procedure') return renderProcedureTab();
-    if (activeTab === 'virtual') return renderVirtualTab();
-    if (activeTab === 'observation') return renderObservationTab();
-    return renderResultTab();
+    switch (activeTab) {
+      case 'info': return renderInfoTab();
+      case 'apparatus': return renderApparatusTab();
+      case 'procedure': return renderProcedureTab();
+      case 'virtual': return renderVirtualTab();
+      case 'observation': return renderObservationTab();
+      case 'result': return renderResultTab();
+      default: return renderInfoTab();
+    }
   }
 
   const activeThemeLabel = theme === 'dark' ? 'Dark Mode' : 'Light Mode';
@@ -1593,6 +1739,20 @@ export default function ExperimentLab() {
             <span className="lab-eyebrow">Experiment Lab</span>
             <h1>{selectedExperiment?.title || 'Virtual Chemistry Lab'}</h1>
           </div>
+        </div>
+
+        {/* ── LAB SESSION CONTROLLER ── */}
+        <div className="hidden lg:block">
+          <LabSessionController 
+            labName={selectedExperiment?.title || "Advanced Experiment Lab"}
+            onStart={() => resetExperiment('manual')}
+            onEnd={(results) => {
+              addXP(250); // High XP reward for complex experiments
+              console.log('Experimental Lab session ended:', results);
+              resetExperiment('manual');
+            }}
+            durationMinutes={60}
+          />
         </div>
 
         <div className="lab-topbar-actions">
@@ -1627,7 +1787,6 @@ export default function ExperimentLab() {
           </button>
         ))}
       </nav>
-
       {activeTab !== 'virtual' && (
         <div className="lab-overview-layout">
           <aside className="lab-overview-sidebar">
@@ -1690,11 +1849,11 @@ export default function ExperimentLab() {
             </section>
           </aside>
 
-          <section className="lab-overview-content">
-            {renderCenterContent()}
-          </section>
-        </div>
-      )}
+            <section className="lab-overview-content">
+              {renderCenterContent()}
+            </section>
+          </div>
+        )}
 
       {activeTab === 'virtual' && renderCenterContent()}
 

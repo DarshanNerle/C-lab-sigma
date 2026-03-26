@@ -11,6 +11,11 @@ class VoiceManager {
         this.stateListeners = new Set();
         this.voicesLoaded = false;
         this.voiceResolverAttached = false;
+
+        // Auto-initialize if supported
+        if (this.synth) {
+            this.ensureVoiceLoading();
+        }
     }
 
     isSupported() {
@@ -20,16 +25,25 @@ class VoiceManager {
     ensureVoiceLoading() {
         if (!this.isSupported() || this.voiceResolverAttached) return;
         this.voiceResolverAttached = true;
+        
         const markLoaded = () => {
             const list = this.synth.getVoices() || [];
-            if (list.length > 0) this.voicesLoaded = true;
+            if (list.length > 0) {
+                this.voicesLoaded = true;
+            }
         };
+
+        // Some browsers load voices asynchronously
+        if (this.synth.onvoiceschanged !== undefined) {
+            this.synth.onvoiceschanged = markLoaded;
+        }
         markLoaded();
-        this.synth.onvoiceschanged = () => markLoaded();
     }
 
     onStateChange(listener) {
         this.stateListeners.add(listener);
+        // Initial state emission
+        listener(!!(this.synth && this.synth.speaking));
         return () => this.stateListeners.delete(listener);
     }
 
@@ -37,15 +51,14 @@ class VoiceManager {
         this.stateListeners.forEach((listener) => {
             try {
                 listener(isSpeaking);
-            } catch {
-                // no-op
+            } catch (err) {
+                console.error("VoiceManager listener error:", err);
             }
         });
     }
 
     getVoices() {
         if (!this.isSupported()) return [];
-        this.ensureVoiceLoading();
         return this.synth.getVoices() || [];
     }
 
@@ -56,13 +69,13 @@ class VoiceManager {
     setVoiceByGender(gender) {
         this.voiceGender = gender === 'male' || gender === 'female' ? gender : 'auto';
 
-        // Re-apply voice target immediately for next utterance.
         const voices = this.getVoices();
         if (!voices.length || this.voiceGender === 'auto') return;
 
         const maleHints = ['male', 'david', 'google uk english male', 'microsoft mark', 'guy'];
-        const femaleHints = ['female', 'samantha', 'google us english', 'zira', 'aria', 'jenny'];
+        const femaleHints = ['female', 'samantha', 'google us english', 'zira', 'aria', 'jenny', 'karen'];
         const hints = this.voiceGender === 'male' ? maleHints : femaleHints;
+        
         const match = voices.find((voice) => {
             const n = `${voice.name} ${voice.lang}`.toLowerCase();
             return hints.some((hint) => n.includes(hint));
@@ -70,8 +83,6 @@ class VoiceManager {
 
         if (match) {
             this.voiceName = match.name;
-        } else {
-            this.voiceName = '';
         }
     }
 
@@ -84,7 +95,11 @@ class VoiceManager {
     }
 
     duckLabAudio(isActive) {
-        soundManager.setVoiceActive(isActive);
+        try {
+            soundManager.setVoiceActive(isActive);
+        } catch {
+            // fail-safe
+        }
     }
 
     sanitizeForSpeech(text) {
@@ -105,32 +120,25 @@ class VoiceManager {
         this.duckLabAudio(false);
     }
 
-    pause() {
-        if (!this.isSupported()) return;
-        if (this.synth.speaking) this.synth.pause();
-    }
-
-    resume() {
-        if (!this.isSupported()) return;
-        if (this.synth.paused) this.synth.resume();
-    }
-
     resolveVoice() {
         const voices = this.getVoices();
         if (!voices.length) return null;
 
-        // Highest priority: explicitly selected voice.
         if (this.voiceName) {
             const direct = voices.find((item) => item.name === this.voiceName);
             if (direct) return direct;
         }
 
         if (this.voiceGender && this.voiceGender !== 'auto') {
-            this.setVoiceByGender(this.voiceGender);
-            if (this.voiceName) {
-                const genderMatch = voices.find((item) => item.name === this.voiceName);
-                if (genderMatch) return genderMatch;
-            }
+            const maleHints = ['male', 'david', 'google uk english male', 'microsoft mark', 'guy'];
+            const femaleHints = ['female', 'samantha', 'google us english', 'zira', 'aria', 'jenny', 'karen'];
+            const hints = this.voiceGender === 'male' ? maleHints : femaleHints;
+            
+            const genderMatch = voices.find((voice) => {
+                const n = `${voice.name} ${voice.lang}`.toLowerCase();
+                return hints.some((hint) => n.includes(hint));
+            });
+            if (genderMatch) return genderMatch;
         }
 
         const preferredDefaults = ['samantha', 'jenny', 'aria', 'zira', 'google us english', 'en-us'];
@@ -141,20 +149,27 @@ class VoiceManager {
         return softDefault || voices[0] || null;
     }
 
-    speak(text) {
+    speak(text, options = {}) {
         if (!this.isSupported()) return false;
+        this.ensureVoiceLoading();
+        
+        // Final protection against stuck synth
+        if (this.synth.paused) {
+            this.synth.resume();
+        }
+
         const value = this.sanitizeForSpeech(text);
         if (!value) return false;
 
-        // Prevent overlap by stopping previous speech first.
         this.stop();
 
         const utterance = new window.SpeechSynthesisUtterance(value);
         const voice = this.resolveVoice();
         if (voice) utterance.voice = voice;
+        
         utterance.rate = this.rate;
         utterance.pitch = this.pitch;
-        utterance.volume = 0.92;
+        utterance.volume = 1.0; // Ensure full volume
 
         utterance.onstart = () => {
             this.emitState(true);
@@ -165,15 +180,30 @@ class VoiceManager {
             this.emitState(false);
             this.duckLabAudio(false);
         };
-        utterance.onerror = () => {
+        utterance.onerror = (err) => {
+            console.error("Speech Synthesis Error:", err);
             this.currentUtterance = null;
             this.emitState(false);
             this.duckLabAudio(false);
         };
 
         this.currentUtterance = utterance;
-        this.synth.speak(utterance);
+        
+        const { immediate = false } = options;
+        if (immediate) {
+            this.synth.speak(utterance);
+        } else {
+            // Small delay to ensure previous cancel() finished
+            setTimeout(() => {
+                this.synth.speak(utterance);
+            }, 50);
+        }
+        
         return true;
+    }
+
+    speakImmediate(text) {
+        return this.speak(text, { immediate: true });
     }
 }
 

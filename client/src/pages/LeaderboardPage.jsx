@@ -35,41 +35,59 @@ export default function LeaderboardPage() {
     const { user } = useAuthStore((state) => ({ user: state.user }));
     const [leagueScores, setLeagueScores] = useState([]);
     const [users, setUsers] = useState([]);
+    const [leagueError, setLeagueError] = useState('');
+    const [usersError, setUsersError] = useState('');
 
     useEffect(() => {
-        const unsubscribe = onSnapshot(collection(db, 'league_scores'), (snapshot) => {
-            const rows = snapshot.docs.map((doc) => {
-                const data = doc.data();
-                const lastUpdated = data.lastUpdated?.toDate
-                    ? data.lastUpdated.toDate()
-                    : data.lastUpdated
-                        ? new Date(data.lastUpdated)
-                        : null;
-                return {
-                    id: doc.id,
-                    ...data,
-                    lastUpdatedDate: lastUpdated
-                };
-            });
-            setLeagueScores(rows);
-        });
+        const unsubscribe = onSnapshot(
+            collection(db, 'league_scores'),
+            (snapshot) => {
+                const rows = snapshot.docs.map((doc) => {
+                    const data = doc.data();
+                    const lastUpdated = data.lastUpdated?.toDate
+                        ? data.lastUpdated.toDate()
+                        : data.lastUpdated
+                            ? new Date(data.lastUpdated)
+                            : null;
+                    return {
+                        id: doc.id,
+                        ...data,
+                        lastUpdatedDate: lastUpdated
+                    };
+                });
+                setLeagueScores(rows);
+                setLeagueError('');
+            },
+            (error) => {
+                setLeagueScores([]);
+                setLeagueError(error?.message || 'Unable to load league scores.');
+            }
+        );
 
         return () => unsubscribe();
     }, []);
 
     useEffect(() => {
-        const unsubscribe = onSnapshot(collection(db, 'users'), (snapshot) => {
-            const rows = snapshot.docs.map((doc) => {
-                const data = doc.data();
-                const userName = String(data?.name || data?.displayName || data?.email?.split('@')[0] || 'Student');
-                return {
-                    userId: doc.id,
-                    userName,
-                    email: data?.email || ''
-                };
-            });
-            setUsers(rows);
-        });
+        const unsubscribe = onSnapshot(
+            collection(db, 'users'),
+            (snapshot) => {
+                const rows = snapshot.docs.map((doc) => {
+                    const data = doc.data();
+                    const userName = String(data?.name || data?.displayName || data?.email?.split('@')[0] || 'Student');
+                    return {
+                        userId: doc.id,
+                        userName,
+                        email: data?.email || ''
+                    };
+                });
+                setUsers(rows);
+                setUsersError('');
+            },
+            (error) => {
+                setUsers([]);
+                setUsersError(error?.message || 'Unable to load users.');
+            }
+        );
 
         return () => unsubscribe();
     }, []);
@@ -120,7 +138,7 @@ export default function LeaderboardPage() {
             return (Number(b.averageAccuracy) || 0) - (Number(a.averageAccuracy) || 0);
         });
         return sorted.map((item, index) => ({ ...item, rank: index + 1 }));
-    }, [scores]);
+    }, [leagueScores, users]);
 
     const topScore = ranked[0]?.totalScore || 1;
     const topTen = ranked.slice(0, 10);
@@ -133,6 +151,14 @@ export default function LeaderboardPage() {
 
     return (
         <div className="w-full space-y-6">
+            {(leagueError || usersError) && (
+                <section className="rounded-3xl border border-amber-400/20 bg-amber-500/10 px-5 py-4 text-sm text-amber-100">
+                    <p className="font-semibold">Leaderboard data is limited.</p>
+                    <p className="mt-1 text-amber-100/80">
+                        {leagueError || usersError} Check Firestore rules or ensure you are signed in.
+                    </p>
+                </section>
+            )}
             <section className="rounded-3xl border border-white/10 bg-slate-900/60 p-6 shadow-[0_16px_40px_rgba(2,6,23,0.45)] backdrop-blur-xl sm:p-8">
                 <div className="flex flex-wrap items-center justify-between gap-4">
                     <div className="flex items-center gap-3">

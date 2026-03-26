@@ -827,7 +827,24 @@ html[data-theme='light'] .lab-record-table {
 }
 
 .lab-record-table input {
-  min-width: 72px;
+    min-width: 72px;
+}
+
+.lab-observation-actions {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+}
+
+.lab-record-table input[readonly] {
+    color: var(--lab-text-soft);
+}
+
+.lab-input-invalid {
+    box-shadow: inset 0 0 0 1px rgba(244, 63, 94, 0.6);
+    border-radius: 8px;
+    color: #fca5a5;
 }
 
 .lab-empty-cell {
