@@ -13,6 +13,7 @@ import {
   CirclePlus,
   Eraser,
   FlaskConical,
+  FileText,
   Gauge,
   Maximize2,
   Minimize2,
@@ -1756,6 +1757,10 @@ export default function ExperimentLab() {
         </div>
 
         <div className="lab-topbar-actions">
+          <button type="button" className="lab-primary-button" onClick={() => setShowReportModal(true)}>
+            <FileText className="w-4 h-4" />
+            <span>Generate Report</span>
+          </button>
           <button type="button" className="lab-secondary-button" onClick={() => toggleFullscreen()}>
             {isFullscreen ? <Minimize2 className="w-4 h-4" /> : <Maximize2 className="w-4 h-4" />}
             <span>{isFullscreen ? 'Exit Fullscreen' : 'Fullscreen'}</span>

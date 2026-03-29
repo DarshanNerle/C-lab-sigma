@@ -1,11 +1,17 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
+import fs from "node:fs";
+import path from "node:path";
+import url from "node:url";
+import dotenv from "dotenv";
+
+// Load environment variables from the root .env file
+dotenv.config({ path: path.resolve(process.cwd(), '.env') });
 
 /**
  * Advanced Vercel API Emulation for Vite
  * Dynamically handles all /api routes for local development.
- * Note: Node modules are imported dynamically inside the plugin to avoid
- * issues in non-Node environments (like Cloudflare's build parser).
+ * Note: Uses a safer routing approach to prevent server crashes.
  */
 const vercelApiEmulation = () => ({
   name: 'vercel-api-emulation',
@@ -14,31 +20,44 @@ const vercelApiEmulation = () => ({
       if (!req.url.startsWith('/api/')) return next();
 
       try {
-        const { default: fs } = await import('fs');
-        const { default: path } = await import('path');
-        const { default: url } = await import('url');
-        const { default: dotenv } = await import('dotenv');
-
-        dotenv.config();
-
-        // Parse request body for POST/PUT/PATCH
-        let body = '';
-        if (['POST', 'PUT', 'PATCH'].includes(req.method)) {
-          for await (const chunk of req) {
-            body += chunk;
-          }
-        }
-
-        // Resolve the API file path
+        // Resolve the API file path (.ts first, then .js)
         const urlPath = req.url.split('?')[0]; // Remove query params
-        const exactFilePath = path.resolve(process.cwd(), urlPath.substring(1) + '.js');
-        const catchAllFilePath = path.resolve(process.cwd(), 'api/[...route].js');
-        const filePath = fs.existsSync(exactFilePath) ? exactFilePath : catchAllFilePath;
+        const tsPath = path.resolve(process.cwd(), urlPath.substring(1) + '.ts');
+        const jsPath = path.resolve(process.cwd(), urlPath.substring(1) + '.js');
+        const catchAllJs = path.resolve(process.cwd(), 'api/[...route].js');
+        const catchAllTs = path.resolve(process.cwd(), 'api/[...route].ts');
+        
+        let filePath = '';
+        if (fs.existsSync(tsPath)) filePath = tsPath;
+        else if (fs.existsSync(jsPath)) filePath = jsPath;
+        else if (fs.existsSync(catchAllJs)) filePath = catchAllJs;
+        else if (fs.existsSync(catchAllTs)) filePath = catchAllTs;
 
-        if (!fs.existsSync(filePath)) {
+        if (!filePath) {
           return next();
         }
         
+        // Parse request body for POST/PUT/PATCH requests
+        let rawBody = '';
+        if (['POST', 'PUT', 'PATCH'].includes(req.method)) {
+          try {
+            const chunks = [];
+            for await (const chunk of req) {
+              chunks.push(chunk);
+            }
+            rawBody = Buffer.concat(chunks).toString();
+            // Store it for handlers
+            try {
+              req.body = rawBody ? JSON.parse(rawBody) : {};
+            } catch (e) {
+              req.body = {};
+            }
+          } catch (e) {
+            console.error('[API Body Parse ERROR]:', e);
+            req.body = {};
+          }
+        }
+
         // Polyfill Vercel helper functions
         res.status = (code) => { res.statusCode = code; return res; };
         res.json = (data) => {
@@ -46,37 +65,29 @@ const vercelApiEmulation = () => ({
           res.end(JSON.stringify(data));
         };
 
-        // Inject parsed body and query params
-        try {
-          req.body = body ? JSON.parse(body) : {};
-        } catch (e) {
-          req.body = {};
-        }
-
         const parsedUrl = url.parse(req.url, true);
         req.query = parsedUrl.query;
 
-        // Dynamic Import of the handler
-        const moduleUrl = url.pathToFileURL(filePath).href + `?t=${Date.now()}`;
-        const { default: handler } = await import(moduleUrl);
-
-        if (typeof handler === 'function') {
-          await handler(req, res);
-        } else {
-          res.status(404).json({ error: `Handler not found in ${urlPath}.js` });
-        }
-      } catch (e) {
-        console.error(`[API Emulation ERROR] ${req.method} ${req.url}:`, e);
-        if (e.code === 'ERR_MODULE_NOT_FOUND') {
-          next();
-        } else {
-          if (res.status) {
-            res.status(500).json({ error: "Serverless Execution Error", details: e.message });
+        // Use Vite's internal loader to handle .ts/ESM/etc.
+        // We wrap this in a localized try/catch to prevent the whole server from crashing
+        try {
+          const handler = await server.ssrLoadModule(filePath);
+          if (handler && typeof handler.default === 'function') {
+            await handler.default(req, res);
           } else {
-            res.statusCode = 500;
-            res.end(JSON.stringify({ error: "Serverless Execution Error", details: e.message }));
+            res.status(404).json({ error: `Handler default export not found in ${filePath}` });
           }
+        } catch (loaderError) {
+          console.error(`[API Loader Error] ${filePath}:`, loaderError);
+          res.status(500).json({ 
+            error: "Module Loading Failed", 
+            message: loaderError.message,
+            path: filePath
+          });
         }
+      } catch (globalError) {
+        console.error(`[API Global Error]:`, globalError);
+        next();
       }
     });
   }

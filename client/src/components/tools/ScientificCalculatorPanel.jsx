@@ -982,7 +982,15 @@ export default function ScientificCalculatorPanel({ compact = false, onClose }) 
         const trimmed = expression.trim();
         const leftEndsWithValue = /(\d|\)|ans|pi|e|m|[A-FXYM])$/i.test(trimmed);
         const rightStartsWithValue = /^[a-z(]/i.test(value) || /^[0-9.]/.test(value);
-        const prefix = leftEndsWithValue && rightStartsWithValue ? '*' : '';
+        
+        let prefix = '';
+        if (leftEndsWithValue && rightStartsWithValue) {
+            const isNumberContinuation = /[\d.]$/.test(trimmed) && /^[0-9.]/.test(value);
+            if (!isNumberContinuation) {
+                prefix = '*';
+            }
+        }
+        
         const nextExpression = `${expression}${prefix}${value}`;
         setExpression(nextExpression);
         updateResultPreview(nextExpression);

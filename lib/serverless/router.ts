@@ -1,4 +1,4 @@
-import { getFirebaseConfigSummary } from '../firebase.js';
+import { getFirebaseConfigSummary } from '../firebase';
 
 // C-LAB v6.1 Serverless Router
 const ROUTES = new Map([

@@ -189,27 +189,30 @@ const FloatingAIButton = () => {
 
     const handleSubmit = async (e) => {
         e?.preventDefault();
-        if (!input.trim() || isTyping) return;
+        const trimmed = input.trim();
+        if (!trimmed || isTyping) return;
         
-        const q = input;
-        setInput('');
-        addChatMessage({ role: 'user', content: q }, 'mini_assistant');
-        setIsTyping(true);
         setErrorText('');
+        addChatMessage({ role: 'user', content: trimmed }, 'mini_assistant');
+        setInput('');
+        setIsTyping(true);
 
         try {
-            const labContext = isLabPage ? `Current lab containers: ${Object.keys(containers).join(', ')}. Action history: ${actionTimeline.slice(-3).map(a => a.type).join(', ')}` : '';
+            const labContext = isLabPage ? `Current lab containers: ${Object.keys(containers).join(', ')}. Action history: ${actionTimeline.slice(-5).map(a => a.type).join(', ')}` : '';
             const res = await AIController.sendMessage({
-                message: q,
-                context: `${currentPage}. ${labContext}`,
+                message: trimmed,
+                context: `Page: ${currentPage}. ${labContext}`,
                 level: userLevel,
                 mode: 'mini_assistant',
                 userEmail
             });
             addChatMessage({ role: 'assistant', content: res }, 'mini_assistant');
-            await speakResponse(res);
+            if (voiceEnabled) await speakResponse(res);
         } catch (err) {
-            setErrorText('Interlink failure. Please retry.');
+            console.error('[AI:Submit] Error:', err);
+            setErrorText(err.message || 'Interlink failure. Please retry.');
+            // Add a graceful system message
+            addChatMessage({ role: 'assistant', content: '⚠️ **System Sync Error**: My neural interface is experiencing interference. Please re-establish connection and try again.' }, 'mini_assistant');
         } finally {
             setIsTyping(false);
         }
@@ -410,32 +413,46 @@ const FloatingAIButton = () => {
                 )}
             </AnimatePresence>
 
-            {/* Trigger Button - Optimized Circular Gradient */}
+            {/* Trigger Button - Optimized Circular Gradient with Scanline */}
             <motion.div
                 drag
                 dragMomentum={false}
                 dragConstraints={{ top: 10, left: 10, right: viewport.width - 60, bottom: viewport.height - 60 }}
                 onDragEnd={(e, info) => setPosition({ x: info.point.x - 24, y: info.point.y - 24 })}
-                whileHover={{ scale: 1.1 }}
-                whileTap={{ scale: 0.9 }}
-                onTap={() => { if (!dragInfo.current.hasMoved) toggleMiniAssistant(); }}
-                className={`w-14 h-14 rounded-full border border-white/20 shadow-2xl flex items-center justify-center pointer-events-auto cursor-pointer transition-all ${
-                    isMiniOpen ? 'bg-slate-900 border-cyan-400' : 'bg-gradient-to-br from-cyan-400 via-blue-500 to-indigo-600'
+                whileHover={{ scale: 1.05 }}
+                whileTap={{ scale: 0.95 }}
+                onTap={() => { toggleMiniAssistant(); }}
+                className={`w-14 h-14 rounded-full border border-white/30 shadow-[0_0_20px_rgba(34,211,238,0.3)] flex items-center justify-center pointer-events-auto cursor-pointer transition-all overflow-hidden relative group ${
+                    isMiniOpen ? 'bg-slate-900 border-cyan-400' : 'bg-slate-950'
                 }`}
             >
-                <div className="relative">
-                    {isMiniOpen ? <X className="w-6 h-6 text-cyan-400" /> : <Bot className="w-7 h-7 text-white" />}
-                    {isSpeaking && <motion.div animate={{ scale: [1, 1.5, 1], opacity: [0.5, 0, 0.5] }} transition={{ duration: 1.5, repeat: Infinity }} className="absolute -inset-2 bg-cyan-400 rounded-full" />}
-                </div>
+                {/* Background Animation */}
+                {!isMiniOpen && (
+                    <div className="absolute inset-0 bg-gradient-to-br from-cyan-500/20 via-blue-600/30 to-indigo-700/20 animate-pulse" />
+                )}
+                
+                {/* Scanline Effect */}
+                {!isMiniOpen && (
+                    <motion.div 
+                        animate={{ y: [-60, 60] }}
+                        transition={{ duration: 2, repeat: Infinity, ease: "linear" }}
+                        className="absolute inset-x-0 h-[2px] bg-cyan-400/50 shadow-[0_0_10px_rgba(34,211,238,0.8)] z-10"
+                    />
+                )}
 
+                <div className="relative z-20">
+                    {isMiniOpen ? <X className="w-6 h-6 text-cyan-400" /> : <Bot className="w-7 h-7 text-cyan-400 group-hover:text-white transition-colors" />}
+                    {isSpeaking && <motion.div animate={{ scale: [1, 1.4, 1], opacity: [0.6, 0.2, 0.6] }} transition={{ duration: 1, repeat: Infinity }} className="absolute -inset-2 bg-cyan-400/40 rounded-full" />}
+                </div>
+ 
                 {/* Greeting Bubble */}
                 {!isMiniOpen && (
                     <motion.div 
-                        initial={{ opacity: 0, scale: 0.8, y: 10 }}
-                        animate={{ opacity: 1, scale: 1, y: 0 }}
-                        className="absolute bottom-full mb-3 whitespace-nowrap bg-slate-950/90 border border-white/10 px-4 py-2 rounded-2xl backdrop-blur-md"
+                        initial={{ opacity: 0, scale: 0.8, x: -20 }}
+                        animate={{ opacity: 1, scale: 1, x: 0 }}
+                        className="absolute right-full mr-4 whitespace-nowrap bg-slate-950/90 border border-white/10 px-4 py-2.5 rounded-2xl backdrop-blur-xl shadow-2xl"
                     >
-                        <p className="text-[10px] font-bold text-white flex items-center gap-2">
+                        <p className="text-[10px] font-black text-white flex items-center gap-2 uppercase tracking-widest">
                             <Sparkles className="w-3 h-3 text-cyan-400 animate-pulse" />
                             {currentGreeting}
                         </p>

@@ -22,11 +22,24 @@ const scoreBadge = (score = 0) => {
 };
 
 const formatDate = (value) => {
-    if (!value) return '—';
+    if (!value) return { date: '—', relative: '' };
     try {
-        return value.toLocaleString();
+        const now = new Date();
+        const diff = now.getTime() - value.getTime();
+        const minutes = Math.floor(diff / 60000);
+        
+        let relative = '';
+        if (minutes < 1) relative = 'Just now';
+        else if (minutes < 60) relative = `${minutes} min ago`;
+        else if (minutes < 1440) relative = `${Math.floor(minutes / 60)}h ago`;
+
+        return {
+            date: value.toLocaleDateString(),
+            time: value.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
+            relative
+        };
     } catch {
-        return '—';
+        return { date: '—', relative: '' };
     }
 };
 
@@ -40,11 +53,6 @@ export default function History() {
     const [sortDir, setSortDir] = useState('desc');
 
     useEffect(() => {
-        if (!user?.uid) {
-            setHistory([]);
-            return undefined;
-        }
-
         const historyQuery = query(collection(db, 'experiment_history'));
 
         const unsubscribe = onSnapshot(historyQuery, (snapshot) => {
@@ -277,7 +285,12 @@ export default function History() {
                                                 {item.duration ? `${item.duration} min` : '—'}
                                             </div>
                                         </td>
-                                        <td className="px-3 py-4 text-sm text-slate-400">{formatDate(item.completedAtDate)}</td>
+                                         <td className="px-3 py-4 text-sm text-slate-400">
+                                            <div className="flex flex-col">
+                                                <span className="text-white font-medium">{formatDate(item.completedAtDate).relative || formatDate(item.completedAtDate).time}</span>
+                                                <span className="text-[10px] opacity-60 uppercase tracking-tight">{formatDate(item.completedAtDate).date}</span>
+                                            </div>
+                                         </td>
                                     </tr>
                                 );
                             })}

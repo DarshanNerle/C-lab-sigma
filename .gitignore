@@ -1,5 +1,10 @@
 node_modules
 dist
+.next
 .env
 .DS_Store
 *.log
+*.tsbuildinfo
+eslint_output.json
+lint_log.txt
+ts_errors.txt

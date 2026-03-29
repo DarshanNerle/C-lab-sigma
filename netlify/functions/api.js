@@ -1,4 +1,4 @@
-import routeApiRequest from '../../lib/serverless/router.js';
+import routeApiRequest from '../../lib/serverless/router.ts';
 
 /**
  * Netlify Function Bridge for C-LAB API

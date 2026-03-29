@@ -4,7 +4,7 @@ import Home from './pages/Home'
 import Login from './pages/Login'
 import Dashboard from './pages/Dashboard'
 import VirtualLab from './pages/VirtualLab'
-import Experiments from './pages/Experiments'
+
 import Profile from './pages/Profile'
 import EditProfile from './pages/EditProfile'
 import LeaderboardPage from './pages/LeaderboardPage'
@@ -22,6 +22,7 @@ import QuizOverlay from './components/quiz/QuizOverlay'
 import FloatingAIButton from './components/teaching/FloatingAIButton'
 import FloatingCalculatorButton from './components/tools/FloatingCalculatorButton'
 import ExperimentLab from './pages/ExperimentLab'
+import ExaminationHall from './pages/ExaminationHall'
 import AppShell from './components/layout/AppShell'
 import History from './pages/History'
 import { soundManager } from './utils/soundManager'
@@ -46,7 +47,8 @@ function App() {
     const { syncGameStats } = useGameStore()
     const { hydrateLabState } = useLabStore()
     const settingsSyncTimerRef = useRef(null)
-    const isImmersiveLabRoute = location.pathname === '/experiment-lab' || location.pathname === '/experiments'
+    const isImmersiveLabRoute = location.pathname === '/experiment-lab'
+    const isExamRoute = location.pathname.includes('/exam') || location.pathname.includes('/experiment_lab')
 
     useEffect(() => {
         const unsubscribeMode = storageService.subscribe((mode) => {
@@ -178,9 +180,9 @@ function App() {
 
     return (
         <div className="w-full h-screen overflow-hidden flex flex-col relative">
-            {!isImmersiveLabRoute && <LabNotebook />}
-            {!isImmersiveLabRoute && <QuizOverlay />}
-            {!isImmersiveLabRoute && <DBStatusBadge />}
+            {!isImmersiveLabRoute && !isExamRoute && <LabNotebook />}
+            {!isImmersiveLabRoute && !isExamRoute && <QuizOverlay />}
+            {!isImmersiveLabRoute && !isExamRoute && <DBStatusBadge />}
             <Routes>
                 <Route path="/" element={<Home />} />
                 <Route path="/login" element={<Login />} />
@@ -188,7 +190,7 @@ function App() {
                 <Route path="/lab" element={<VirtualLab />} />
                 <Route path="/lab3d" element={<VirtualLab />} />
                 <Route path="/lab2d" element={<VirtualLab2D />} />
-                <Route path="/experiments" element={<Experiments />} />
+
                 <Route path="/experiment-lab" element={<ExperimentLab />} />
                 <Route path="/admin" element={<AdminDashboard />} />
                 <Route path="/teacher" element={<TeacherDashboard />} />
@@ -196,6 +198,7 @@ function App() {
                 <Route path="/ai-chemistry-master" element={<AIChemistryMaster />} />
                 <Route element={<AppShell />}>
                     <Route path="/dashboard" element={<Dashboard />} />
+                    <Route path="/exam" element={<ExaminationHall />} />
                     <Route path="/learn-more" element={<LearnMore />} />
                     <Route path="/calculator" element={<ScientificCalculator />} />
                     <Route path="/profile" element={<Profile />} />
@@ -205,8 +208,8 @@ function App() {
                     <Route path="/skills" element={<SkillTree />} />
                 </Route>
             </Routes>
-            <FloatingCalculatorButton />
-            {!isImmersiveLabRoute && <FloatingAIButton />}
+            {!isImmersiveLabRoute && !isExamRoute && <FloatingCalculatorButton />}
+            {!isImmersiveLabRoute && !isExamRoute && <FloatingAIButton />}
         </div>
     )
 }

@@ -16,6 +16,7 @@ import {
     Moon,
     NotebookPen,
     Search,
+    ShieldCheck,
     Sun,
     Trophy,
     User
@@ -28,10 +29,11 @@ const primaryNav = [
     { label: '2D Lab', to: '/lab2d', icon: Beaker, shortcut: 'L' },
     { label: '3D Lab', to: '/lab', icon: FlaskConical, shortcut: 'L' },
     { label: 'Experiment Lab', to: '/experiment-lab', icon: FlaskConical, shortcut: 'E' },
+    { label: 'Examination Hall', to: '/exam', icon: ShieldCheck, shortcut: 'X' },
     { label: 'Learn More', to: '/learn-more', icon: GraduationCap, shortcut: 'M' },
     { label: 'Calculator', to: '/calculator', icon: Calculator, shortcut: '' },
     { label: 'AI Chat', to: '/ai-chemistry-master', icon: Bot, shortcut: 'A' },
-    { label: 'Experiments', to: '/experiments', icon: Command, shortcut: 'Ctrl+K' },
+
     { label: 'Experiment History', to: '/history', icon: NotebookPen, shortcut: '' },
     { label: 'League', to: '/leaderboard', icon: Trophy, shortcut: '' }
 ];
