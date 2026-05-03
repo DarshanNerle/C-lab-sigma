@@ -16,13 +16,15 @@ import { CHEMISTRY_DATABASE, REACTION_RULES } from '../constants/chemistryData';
 import { chemicalsData, getChemData } from '../constants/chemicalsData';
 import { TeachingController } from '../modules/teaching/TeachingController';
 import { motion, AnimatePresence } from 'framer-motion';
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import useAuthStore from '../store/useAuthStore';
+import useArenaStore from '../store/useArenaStore';
 import ProfileDropdown from '../components/ui/ProfileDropdown';
 import { logoutUser } from '../firebase/auth';
 import LabAnalyticsPanel from '../components/lab2D/LabAnalyticsPanel';
 import LabSessionController from '../components/lab2D/LabSessionController';
 import LabEnhancementsHUD from '../components/ui/LabEnhancementsHUD';
+import ArenaMissionPanel from '../components/arena/ArenaMissionPanel';
 import {
     FlaskConical, RefreshCw, Database, ArrowLeft, Book, X,
     Activity, Droplets, Brain, BookOpen, PlayCircle, Info, Undo2
@@ -66,6 +68,11 @@ export default function VirtualLab2D() {
         actionTimeline = []
     } = useLabStore();
     const navigate = useNavigate();
+    const location = useLocation();
+    const arenaRooms = useArenaStore((state) => state.rooms);
+    const activeArenaSession = useArenaStore((state) => state.activeSession);
+    const registerArenaLabAction = useArenaStore((state) => state.registerLabAction);
+    const registerArenaReaction = useArenaStore((state) => state.registerReaction);
 
 
     const { addXP, discoverReaction, addBadge } = useGameStore();
@@ -95,6 +102,7 @@ export default function VirtualLab2D() {
     const [showQuiz, setShowQuiz] = useState(false);
     const [completedLessonId, setCompletedLessonId] = useState(null);
     const [showHint, setShowHint] = useState(true);
+    const activeArenaRoom = arenaRooms.find((room) => room.id === (activeArenaSession?.roomId || location.state?.arenaRoomId)) || null;
 
     useEffect(() => {
         const timer = setTimeout(() => setShowHint(false), 8000);
@@ -178,6 +186,19 @@ export default function VirtualLab2D() {
             if (Date.now() - sessionStartedAt < 90000) addBadge('Fast Completion');
         }
     }, [activeReaction, addXP, discoverReaction, addBadge, sessionStartedAt]);
+
+    useEffect(() => {
+        if (!activeArenaSession?.roomId || activeArenaSession.status !== 'active') return;
+        const latestAction = actionTimeline[actionTimeline.length - 1];
+        if (latestAction) {
+            registerArenaLabAction(latestAction);
+        }
+    }, [actionTimeline, activeArenaSession?.roomId, activeArenaSession?.status, registerArenaLabAction]);
+
+    useEffect(() => {
+        if (!activeArenaSession?.roomId || activeArenaSession.status !== 'active' || !activeReaction?.id) return;
+        registerArenaReaction(activeReaction);
+    }, [activeReaction, activeArenaSession?.roomId, activeArenaSession?.status, registerArenaReaction]);
 
     // Titration Endpoint Detection
     useEffect(() => {
@@ -264,6 +285,9 @@ export default function VirtualLab2D() {
 
     return (
         <div className="w-full h-screen flex flex-col bg-lab-dark relative overflow-hidden font-sans mesh-gradient-blue text-white">
+            {activeArenaRoom && activeArenaSession && (
+                <ArenaMissionPanel room={activeArenaRoom} session={activeArenaSession} />
+            )}
 
             {/* Background Atmosphere */}
             <div className="absolute top-0 left-0 w-full h-full opacity-30 select-none pointer-events-none"

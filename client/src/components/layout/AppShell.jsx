@@ -2,7 +2,6 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { Link, NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import {
     Beaker,
-    Bell,
     Bot,
     ChevronLeft,
     ChevronRight,
@@ -19,16 +18,19 @@ import {
     ShieldCheck,
     Sun,
     Trophy,
-    User
+    User,
+    Users
 } from 'lucide-react';
 import useThemeStore from '../../store/useThemeStore';
 import ProfileDropdown from '../ui/ProfileDropdown';
+import ArenaNotificationCenter from '../arena/ArenaNotificationCenter';
 
 const primaryNav = [
     { label: 'Dashboard', to: '/dashboard', icon: Home, shortcut: 'D' },
     { label: '2D Lab', to: '/lab2d', icon: Beaker, shortcut: 'L' },
     { label: '3D Lab', to: '/lab', icon: FlaskConical, shortcut: 'L' },
     { label: 'Experiment Lab', to: '/experiment-lab', icon: FlaskConical, shortcut: 'E' },
+    { label: 'Lab Arena', to: '/lab-arena', icon: Users, shortcut: 'R' },
     { label: 'Examination Hall', to: '/exam', icon: ShieldCheck, shortcut: 'X' },
     { label: 'Learn More', to: '/learn-more', icon: GraduationCap, shortcut: 'M' },
     { label: 'Calculator', to: '/calculator', icon: Calculator, shortcut: '' },
@@ -49,7 +51,7 @@ const mobileNavItems = [
     primaryNav[2],
     primaryNav[3],
     primaryNav[4],
-    primaryNav[6]
+    primaryNav[5]
 ];
 
 function ShellNavLink({ item, compact = false, onClick }) {
@@ -232,15 +234,7 @@ export default function AppShell() {
                             {themeMode === 'dark' ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
                         </button>
 
-                        <button
-                            type="button"
-                            className="relative inline-flex h-10 w-10 items-center justify-center rounded-xl border border-white/10 text-slate-300 transition duration-200 hover:border-cyan-400/40 hover:bg-white/5"
-                            aria-label="Notifications"
-                        >
-                            <Bell className="h-4 w-4" />
-                            <span className="absolute right-2 top-2 h-2 w-2 rounded-full bg-cyan-400" />
-                        </button>
-
+                        <ArenaNotificationCenter />
                         <ProfileDropdown />
                     </div>
                 </div>

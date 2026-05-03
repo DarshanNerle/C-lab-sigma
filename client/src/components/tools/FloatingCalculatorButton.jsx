@@ -8,7 +8,7 @@ export default function FloatingCalculatorButton() {
     const [isOpen, setIsOpen] = useState(false);
     const location = useLocation();
 
-    const isAppShellPage = ['/dashboard', '/experiments', '/profile', '/leaderboard', '/history', '/skills', '/learn-more', '/calculator'].some(
+    const isAppShellPage = ['/dashboard', '/lab-arena', '/experiments', '/profile', '/leaderboard', '/history', '/skills', '/learn-more', '/calculator'].some(
         (path) => location.pathname.startsWith(path)
     );
 

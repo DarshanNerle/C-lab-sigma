@@ -4,6 +4,7 @@ import Home from './pages/Home'
 import Login from './pages/Login'
 import Dashboard from './pages/Dashboard'
 import VirtualLab from './pages/VirtualLab'
+import LabArena from './pages/LabArena'
 
 import Profile from './pages/Profile'
 import EditProfile from './pages/EditProfile'
@@ -32,6 +33,7 @@ import useGameStore from './store/useGameStore'
 import useAIStore from './store/useAIStore'
 import useVoiceStore from './store/useVoiceStore'
 import useLabStore from './store/useLabStore'
+import useArenaStore from './store/useArenaStore'
 import { auth } from './firebase/config'
 import { onAuthStateChanged } from 'firebase/auth'
 import DBStatusBadge from './components/ui/DBStatusBadge'
@@ -43,9 +45,10 @@ function App() {
     const { isSoundEnabled, soundVolume, immersiveMode, animationIntensity, syncSettings } = useThemeStore()
     const { currentMode, syncSettings: syncAISettings } = useAIStore()
     const { voiceEnabled, speechRate, speechPitch, selectedVoice, voiceGender, syncSettings: syncVoiceSettings } = useVoiceStore()
-    const { user, setUser, clearUser, setStorageMode } = useAuthStore()
+    const { user, profile, setUser, clearUser, setStorageMode } = useAuthStore()
     const { syncGameStats } = useGameStore()
     const { hydrateLabState } = useLabStore()
+    const { bootstrap: bootstrapArena } = useArenaStore()
     const settingsSyncTimerRef = useRef(null)
     const isImmersiveLabRoute = location.pathname === '/experiment-lab'
     const isExamRoute = location.pathname.includes('/exam') || location.pathname.includes('/experiment_lab')
@@ -178,6 +181,10 @@ function App() {
         return () => document.removeEventListener('keydown', onKeyDown)
     }, [location.pathname, navigate])
 
+    useEffect(() => {
+        bootstrapArena({ user, profile })
+    }, [bootstrapArena, user, profile])
+
     return (
         <div className="w-full h-screen overflow-hidden flex flex-col relative">
             {!isImmersiveLabRoute && !isExamRoute && <LabNotebook />}
@@ -198,6 +205,7 @@ function App() {
                 <Route path="/ai-chemistry-master" element={<AIChemistryMaster />} />
                 <Route element={<AppShell />}>
                     <Route path="/dashboard" element={<Dashboard />} />
+                    <Route path="/lab-arena" element={<LabArena />} />
                     <Route path="/exam" element={<ExaminationHall />} />
                     <Route path="/learn-more" element={<LearnMore />} />
                     <Route path="/calculator" element={<ScientificCalculator />} />

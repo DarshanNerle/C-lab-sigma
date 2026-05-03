@@ -52,7 +52,7 @@ const FloatingAIButton = () => {
     const { user } = useAuthStore();
     const userEmail = user?.email;
 
-    const isAppShellPage = ['/dashboard', '/experiments', '/profile', '/leaderboard', '/history', '/skills', '/learn-more', '/calculator'].some(p => location.pathname.startsWith(p));
+    const isAppShellPage = ['/dashboard', '/lab-arena', '/experiments', '/profile', '/leaderboard', '/history', '/skills', '/learn-more', '/calculator'].some(p => location.pathname.startsWith(p));
     const isLabPage = location.pathname.includes('/lab');
 
     // Default position matches the calculator's layout
