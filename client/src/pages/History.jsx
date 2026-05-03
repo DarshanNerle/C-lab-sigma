@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { collection, onSnapshot, query } from 'firebase/firestore';
+import { collection, onSnapshot, query, where, orderBy } from 'firebase/firestore';
 import { db } from '../firebase/config';
 import useAuthStore from '../store/useAuthStore';
 import {
@@ -44,7 +44,7 @@ const formatDate = (value) => {
 };
 
 export default function History() {
-    const { user } = useAuthStore((state) => ({ user: state.user }));
+    const { user, isTeacher, isAdmin } = useAuthStore();
     const [history, setHistory] = useState([]);
     const [search, setSearch] = useState('');
     const [filterName, setFilterName] = useState('all');
@@ -53,7 +53,18 @@ export default function History() {
     const [sortDir, setSortDir] = useState('desc');
 
     useEffect(() => {
-        const historyQuery = query(collection(db, 'experiment_history'));
+        if (!user?.uid) return;
+
+        let historyQuery;
+        if (isAdmin || isTeacher) {
+            historyQuery = query(collection(db, 'experiment_history'), orderBy('completedAt', 'desc'));
+        } else {
+            historyQuery = query(
+                collection(db, 'experiment_history'), 
+                where('userId', '==', user.uid),
+                orderBy('completedAt', 'desc')
+            );
+        }
 
         const unsubscribe = onSnapshot(historyQuery, (snapshot) => {
             const rows = snapshot.docs.map((doc) => {

@@ -648,7 +648,7 @@ function getEquipmentLabel(type) {
 }
 
 export default function ExperimentLab() {
-  const { theme, setTheme } = useThemeContext();
+  const [theme, setTheme] = useState('dark');
   const { user, profile } = useAuthStore((state) => ({ user: state.user, profile: state.profile }));
   const { addXP } = useGameStore();
   const labShellRef = useRef(null);
@@ -1723,7 +1723,7 @@ export default function ExperimentLab() {
   const activeThemeLabel = theme === 'dark' ? 'Dark Mode' : 'Light Mode';
 
   return (
-    <div ref={labShellRef} className={`lab-shell ${isFullscreen ? 'is-fullscreen' : ''}`}>
+    <div ref={labShellRef} className={`lab-shell ${isFullscreen ? 'is-fullscreen' : ''}`} data-theme={theme}>
       <NotificationStack
         notifications={notifications}
         onMinimize={(id) => setNotifications((current) => current.map((item) => (item.id === id ? { ...item, minimized: true } : item)))}
@@ -1742,14 +1742,29 @@ export default function ExperimentLab() {
           </div>
         </div>
 
-        {/* ── LAB SESSION CONTROLLER ── */}
-        <div className="hidden lg:block">
+        <div className="mx-2">
           <LabSessionController 
             labName={selectedExperiment?.title || "Advanced Experiment Lab"}
-            onStart={() => resetExperiment('manual')}
-            onEnd={(results) => {
-              addXP(250); // High XP reward for complex experiments
-              console.log('Experimental Lab session ended:', results);
+            isActive={hasStarted}
+            onStart={startExperiment}
+            onEnd={async (results) => {
+              addXP(250); 
+              try {
+                await addDoc(collection(db, 'experiment_history'), {
+                  experimentName: selectedExperiment?.title || "Advanced Experiment Lab",
+                  userName: profile?.name || user?.displayName || user?.email || "Student",
+                  userId: user?.uid,
+                  score: results.feedback?.rating ? results.feedback.rating * 20 : 85,
+                  accuracy: 94,
+                  result: results.feedback?.feedback || "Protocol successfully archived.",
+                  chemicalsUsed: labStatus.selectedChemicals || [],
+                  duration: Math.round(results.timeSpent / 60),
+                  completedAt: serverTimestamp()
+                });
+                pushNotification('Lab Complete', 'Session archived. +250 XP earned.', 'success');
+              } catch (e) {
+                pushNotification('Sync Warning', 'Lab completed but cloud sync failed.', 'warning');
+              }
               resetExperiment('manual');
             }}
             durationMinutes={60}

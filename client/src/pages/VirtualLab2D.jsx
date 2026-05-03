@@ -21,6 +21,8 @@ import useAuthStore from '../store/useAuthStore';
 import useArenaStore from '../store/useArenaStore';
 import ProfileDropdown from '../components/ui/ProfileDropdown';
 import { logoutUser } from '../firebase/auth';
+import { db } from '../firebase/config';
+import { collection, addDoc, serverTimestamp } from 'firebase/firestore';
 import LabAnalyticsPanel from '../components/lab2D/LabAnalyticsPanel';
 import LabSessionController from '../components/lab2D/LabSessionController';
 import LabEnhancementsHUD from '../components/ui/LabEnhancementsHUD';
@@ -31,8 +33,6 @@ import {
 } from 'lucide-react';
 
 // ─── Feature Unlock Config ──────────────────────────────────────────────────
-// pHCalculator unlocks after the user adds at least 2 chemicals (any container)
-// guidedLesson always available
 const checkFeatureUnlock = (containers) => {
     if (!containers || typeof containers !== 'object') {
         return { pHCalculator: false, guidedLesson: true, phMastery: false };
@@ -42,9 +42,9 @@ const checkFeatureUnlock = (containers) => {
             (acc, c) => acc + (c?.components?.length || 0), 0
         );
         return {
-            pHCalculator: totalComponents >= 1,   // Unlock after first chemical added
-            guidedLesson: true,                    // Always available
-            phMastery: totalComponents >= 2,       // Unlocks after 2 additions
+            pHCalculator: totalComponents >= 1,
+            guidedLesson: true,
+            phMastery: totalComponents >= 2,
         };
     } catch (e) {
         return { pHCalculator: false, guidedLesson: true, phMastery: false };
@@ -73,7 +73,7 @@ export default function VirtualLab2D() {
     const activeArenaSession = useArenaStore((state) => state.activeSession);
     const registerArenaLabAction = useArenaStore((state) => state.registerLabAction);
     const registerArenaReaction = useArenaStore((state) => state.registerReaction);
-
+    const { user, profile } = useAuthStore();
 
     const { addXP, discoverReaction, addBadge } = useGameStore();
 
@@ -83,9 +83,9 @@ export default function VirtualLab2D() {
     const [pourAmount, setPourAmount] = useState(10);
     const [showTelemetry, setShowTelemetry] = useState(false);
     const [draggedSource, setDraggedSource] = useState(null);
-    const [activeTab, setActiveTab] = useState('normal'); // 'normal' | 'titration'
-    const [infoCardData, setInfoCardData] = useState(null); // Used for the floating instrument info card
-    const [persistedInfoCard, setPersistedInfoCard] = useState(null); // Clicked persistent card
+    const [activeTab, setActiveTab] = useState('normal'); 
+    const [infoCardData, setInfoCardData] = useState(null);
+    const [persistedInfoCard, setPersistedInfoCard] = useState(null);
     const [titrationSession, setTitrationSession] = useState({
         isActive: false,
         initialVol: 0,
@@ -95,13 +95,14 @@ export default function VirtualLab2D() {
         endpointReached: false
     });
 
-    // ── New feature states ──────────────────────────────────────────────────
     const [showPHPanel, setShowPHPanel] = useState(false);
     const [showLevelSelector, setShowLevelSelector] = useState(false);
     const [pendingLessonId, setPendingLessonId] = useState(null);
     const [showQuiz, setShowQuiz] = useState(false);
     const [completedLessonId, setCompletedLessonId] = useState(null);
     const [showHint, setShowHint] = useState(true);
+    const [hasStarted, setHasStarted] = useState(false);
+
     const activeArenaRoom = arenaRooms.find((room) => room.id === (activeArenaSession?.roomId || location.state?.arenaRoomId)) || null;
 
     useEffect(() => {
@@ -112,7 +113,6 @@ export default function VirtualLab2D() {
     const featureUnlocks = checkFeatureUnlock(containers);
     const activePH = (containers && containers[selectedContainer]) ? (containers[selectedContainer].ph ?? 7.0) : 7.0;
 
-    // ── Drag/Drop ───────────────────────────────────────────────────────────
     const handleDragStart = (e, sourceId) => {
         setDraggedSource(sourceId);
         e.dataTransfer.setData('sourceId', sourceId);
@@ -123,7 +123,6 @@ export default function VirtualLab2D() {
         const sourceId = e.dataTransfer.getData('sourceId') || draggedSource;
         if (!sourceId) return;
 
-        // Check if source is a chemical ID or a container ID
         if (CHEMISTRY_DATABASE[sourceId]) {
             addChemical(targetId, sourceId, pourAmount);
         } else if (sourceId !== targetId && containers[sourceId]) {
@@ -135,7 +134,7 @@ export default function VirtualLab2D() {
         const target = selectedContainer.startsWith('flask') || selectedContainer.startsWith('beaker')
             ? selectedContainer : 'flask1';
         if (target !== id) {
-            pour(id, target, amount); // Respect the drop volume
+            pour(id, target, amount);
         }
     };
     const toggleBuretteValve = (id) => {
@@ -144,7 +143,6 @@ export default function VirtualLab2D() {
 
         const nextState = !current.isOpen;
 
-        // Start titration session if turning on
         if (activeTab === 'titration' && nextState && !titrationSession.isActive) {
             setTitrationSession(prev => ({
                 ...prev,
@@ -182,10 +180,8 @@ export default function VirtualLab2D() {
             addXP(activeReaction.xp);
             if (activeReaction.id) discoverReaction(activeReaction.id);
             setLastReaction(activeReaction);
-            if (activeReaction.xp >= 100) addBadge('Perfect Score');
-            if (Date.now() - sessionStartedAt < 90000) addBadge('Fast Completion');
         }
-    }, [activeReaction, addXP, discoverReaction, addBadge, sessionStartedAt]);
+    }, [activeReaction]);
 
     useEffect(() => {
         if (!activeArenaSession?.roomId || activeArenaSession.status !== 'active') return;
@@ -193,24 +189,18 @@ export default function VirtualLab2D() {
         if (latestAction) {
             registerArenaLabAction(latestAction);
         }
-    }, [actionTimeline, activeArenaSession?.roomId, activeArenaSession?.status, registerArenaLabAction]);
+    }, [actionTimeline]);
 
     useEffect(() => {
         if (!activeArenaSession?.roomId || activeArenaSession.status !== 'active' || !activeReaction?.id) return;
         registerArenaReaction(activeReaction);
-    }, [activeReaction, activeArenaSession?.roomId, activeArenaSession?.status, registerArenaReaction]);
+    }, [activeReaction]);
 
-    // Titration Endpoint Detection
     useEffect(() => {
         if (activeTab === 'titration' && titrationSession.isActive && !titrationSession.endpointReached) {
             const flask = containers['flask1'];
-            // Detect phenolphthalein pink or other indicator shifts
-            // Engine sets hot pink for ph > 8.5
             if (flask?.color.includes('255, 0, 128') || flask?.ph > 8.5) {
-                // Endpoint reached!
                 const burette = containers['burette1'];
-
-                // Stop flow
                 useLabStore.setState(state => ({
                     containers: { ...state.containers, burette1: { ...state.containers.burette1, isOpen: false } }
                 }));
@@ -227,19 +217,11 @@ export default function VirtualLab2D() {
                 });
             }
         }
-    }, [containers, activeTab, titrationSession.isActive, titrationSession.endpointReached]);
+    }, [containers, activeTab]);
 
-    // Update persisted card data if it exists and container changes
     useEffect(() => {
         if (persistedInfoCard && persistedInfoCard.containerId !== 'Burner') {
-            const containerKey = Object.keys(containers).find(key => {
-                const type = containers[key].type;
-                const label = type === 'testTube' ? 'Test Tube' : type === 'beaker' ? 'Beaker' : type === 'flask' ? 'Conical Flask' : type === 'burette' ? 'Burette' : null;
-                return label === persistedInfoCard.containerId;
-            });
-
-            // Simpler matching: find by id from the info card if we store it
-            const matchingContainer = containers[selectedContainer]; // Usually the selected one is being watched
+            const matchingContainer = containers[selectedContainer];
             if (matchingContainer) {
                 const comp = matchingContainer.components[0];
                 setPersistedInfoCard({
@@ -254,7 +236,6 @@ export default function VirtualLab2D() {
         }
     }, [containers, selectedContainer]);
 
-    // ── Lesson triggering ────────────────────────────────────────────────────
     const handleStartLesson = (lessonId) => {
         setPendingLessonId(lessonId);
         setShowLevelSelector(true);
@@ -266,7 +247,6 @@ export default function VirtualLab2D() {
         setShowLevelSelector(false);
         setPendingLessonId(null);
     };
-
     const handleExperimentComplete = () => {
         setCompletedLessonId(currentLesson?.id || 'ph_mastery');
         setShowQuiz(true);
@@ -274,7 +254,6 @@ export default function VirtualLab2D() {
 
     const [chemicals] = useState(Object.values(CHEMISTRY_DATABASE).slice(0, 24));
 
-    // ── pH color helper ──────────────────────────────────────────────────────
     const phColor = (ph) => {
         if (ph < 3) return '#ef4444';
         if (ph < 7) return '#f97316';
@@ -289,7 +268,6 @@ export default function VirtualLab2D() {
                 <ArenaMissionPanel room={activeArenaRoom} session={activeArenaSession} />
             )}
 
-            {/* Background Atmosphere */}
             <div className="absolute top-0 left-0 w-full h-full opacity-30 select-none pointer-events-none"
                 style={{ backgroundImage: 'radial-gradient(circle at 2px 2px, rgba(255,255,255,0.05) 1px, transparent 0)', backgroundSize: '40px 40px' }} />
             {draggedSource && (
@@ -298,8 +276,7 @@ export default function VirtualLab2D() {
             <div className="absolute -top-24 -left-24 w-96 h-96 bg-blue-600/10 blur-[120px] rounded-full animate-pulse" />
             <div className="absolute -bottom-24 -right-24 w-96 h-96 bg-purple-600/10 blur-[120px] rounded-full animate-pulse" />
 
-            {/* ── Header ─────────────────────────────────────────────────────── */}
-                        <LabEnhancementsHUD
+            <LabEnhancementsHUD 
                 contextKey="lab2d"
                 reaction={lastReaction || activeReaction}
                 onReplay={() => {
@@ -322,7 +299,6 @@ export default function VirtualLab2D() {
                         </div>
                     </div>
 
-                    {/* Tabs */}
                     <div className="flex items-center bg-black/40 border border-white/10 p-1 rounded-xl">
                         <button
                             onClick={() => { setActiveTab('normal'); setSelectedContainer('beaker1'); resetLab(); }}
@@ -335,7 +311,6 @@ export default function VirtualLab2D() {
                                 setActiveTab('titration');
                                 setSelectedContainer('burette1');
                                 resetLab();
-                                // Setup Titration Baseline
                                 addChemical('flask1', 'hydrochloric_acid', 50);
                                 addChemical('flask1', 'phenolphthalein', 2);
                             }}
@@ -345,13 +320,32 @@ export default function VirtualLab2D() {
                         </button>
                     </div>
 
-                    {/* ── LAB SESSION CONTROLLER (Like Google Cloud / Qwiklabs) ── */}
-                    <div className="hidden lg:flex items-center px-6 border-l border-white/10">
-                        <LabSessionController
-                            onStart={() => resetLab()}
-                            onEnd={(results) => {
-                                console.log('Lab session ended:', results);
-                                addXP(150); // Award XP for completing the session
+                    <div className="flex items-center px-6 border-l border-white/10">
+                        <LabSessionController 
+                            labName="Advanced Virtual Lab"
+                            isActive={hasStarted}
+                            onStart={() => {
+                                setHasStarted(true);
+                                resetLab();
+                            }}
+                            onEnd={async (results) => {
+                                setHasStarted(false);
+                                addXP(300);
+                                try {
+                                    await addDoc(collection(db, 'experiment_history'), {
+                                        experimentName: currentLesson?.title || "Advanced 2D Lab",
+                                        userName: profile?.name || user?.displayName || user?.email || "Student",
+                                        userId: user?.uid,
+                                        score: results.feedback?.rating ? results.feedback.rating * 20 : 90,
+                                        accuracy: 95,
+                                        result: results.feedback?.feedback || "Successfully completed the virtual lab session.",
+                                        chemicalsUsed: Object.values(containers).flatMap(c => c.components.map(comp => comp.id)),
+                                        duration: Math.round(results.timeSpent / 60),
+                                        completedAt: serverTimestamp()
+                                    });
+                                } catch (e) {
+                                    console.warn("Failed to sync history:", e);
+                                }
                                 if (currentLesson) handleExperimentComplete();
                                 else resetLab();
                             }}
@@ -362,77 +356,34 @@ export default function VirtualLab2D() {
                 </div>
 
                 <div className="flex items-center gap-2 md:gap-4">
-                    {/* pH live badge */}
                     <AnimatePresence>
                         {featureUnlocks.pHCalculator && (
                             <motion.button
                                 initial={{ opacity: 0, scale: 0.8 }}
                                 animate={{ opacity: 1, scale: 1 }}
                                 onClick={() => setShowPHPanel(v => !v)}
-                                className="hidden sm:flex items-center gap-2 px-3 py-2 advanced-glass rounded-xl border-white/10 transition-all hover:bg-white/5"
+                                className="hidden sm:flex items-center gap-2 px-3 py-2 advanced-glass rounded-xl border-white/10"
                             >
                                 <Droplets className="w-4 h-4 text-indigo-400" />
-                                <span className="font-mono font-bold text-sm text-slate-300">
-                                    pH {activePH.toFixed(2)}
-                                </span>
+                                <span className="font-mono font-bold text-sm text-slate-300">pH {activePH.toFixed(2)}</span>
                             </motion.button>
                         )}
                     </AnimatePresence>
 
-                    {/* Knowledge level badge */}
-                    {currentLesson && (
-                        <div className="hidden md:flex items-center gap-1.5 px-3 py-2 bg-purple-500/10 border border-purple-500/30 rounded-xl">
-                            <Brain className="w-3.5 h-3.5 text-purple-400" />
-                            <span className="text-[10px] font-black text-purple-300 uppercase tracking-widest">{knowledgeLevel}</span>
-                        </div>
-                    )}
-
                     <button
                         onClick={() => setShowTelemetry(!showTelemetry)}
-                        className="lg:hidden p-3 advanced-glass rounded-xl text-neon-cyan active:scale-90 transition-transform"
+                        className="lg:hidden p-3 advanced-glass rounded-xl text-neon-cyan"
                     >
                         <Activity className="w-5 h-5" />
                     </button>
 
-                    <div className="hidden lg:flex flex-col items-end px-6 border-r border-white/10 uppercase">
-                        <span className="text-[9px] font-black text-neon-purple tracking-widest">Atmospheric Pressure</span>
-                        <span className="text-lg font-mono font-bold text-white tracking-tighter">1.01 atm</span>
-                    </div>
-
-                    <div className="flex gap-2">
-                        <button
-                            onClick={() => useNotebookStore.getState().toggleNotebook()}
-                            className="hidden md:flex advanced-glass px-4 md:px-6 py-3 rounded-xl text-slate-300 hover:text-white transition-all items-center gap-3 font-bold text-[10px] tracking-widest border-white/5"
-                        >
-                            <Book className="w-4 h-4" /> NOTEBOOK
-                        </button>
-                        <button
-                            onClick={resetLab}
-                            className="p-3 advanced-glass rounded-xl text-gray-400 hover:text-red-400 transition-all active:rotate-180 duration-500"
-                            title="Reset Laboratory"
-                        >
-                            <RefreshCw className="w-5 h-5" />
-                        </button>
-                        <button
-                            onClick={undoLastStep}
-                            className="p-3 advanced-glass rounded-xl text-gray-400 hover:text-cyan-300 transition-all"
-                            title="Undo Last Step"
-                        >
-                            <Undo2 className="w-5 h-5" />
-                        </button>
-
-                        <div className="h-8 w-px bg-white/10 mx-2 hidden sm:block"></div>
-
-                        <ProfileDropdown />
-                    </div>
+                    <ProfileDropdown />
                 </div>
             </header>
 
-            {/* ── Main Layout ─────────────────────────────────────────────────── */}
             <main className="flex-1 flex min-h-0 relative overflow-hidden">
                 <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_50%_15%,rgba(59,130,246,0.12),transparent_55%)] animate-pulse" />
-
-                {/* ── Left Sidebar ──────────────────────────────────────────────── */}
+                
                 <aside className={`
                     fixed inset-y-0 left-0 z-[150] w-80 bg-black/95 backdrop-blur-2xl p-6 transform transition-transform duration-500 border-r border-white/10
                     lg:relative lg:translate-x-0 lg:bg-black/20 lg:backdrop-blur-sm lg:z-10 shadow-2xl flex flex-col gap-4
@@ -443,13 +394,11 @@ export default function VirtualLab2D() {
                     </button>
 
                     <div className="flex flex-col h-full gap-4 overflow-y-auto scrollbar-hide">
-                        {/* Active Selector */}
                         <div className="flex flex-col gap-2 mb-2">
                             <span className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">Active Selector</span>
                             <div className="text-xl font-bold tracking-tight text-white uppercase">{selectedContainer}</div>
                         </div>
 
-                        {/* Components */}
                         <div className="space-y-3">
                             <div className="flex items-center justify-between">
                                 <span className="text-[10px] font-black text-white/40 uppercase tracking-[0.2em]">Components</span>
@@ -479,7 +428,6 @@ export default function VirtualLab2D() {
                             )}
                         </div>
 
-                        {/* Refill */}
                         <button
                             onClick={() => refillContainer(selectedContainer)}
                             className="w-full py-3 rounded-2xl bg-neon-cyan/10 border border-neon-cyan/20 text-neon-cyan font-black text-[10px] tracking-[0.3em] uppercase hover:bg-neon-cyan hover:text-white transition-all"
@@ -487,7 +435,6 @@ export default function VirtualLab2D() {
                             <RefreshCw className="w-3 h-3 inline mr-2" /> REFILL
                         </button>
 
-                        {/* Physical Matrix */}
                         <div className="advanced-glass p-5 rounded-3xl border-neon-purple/20">
                             <div className="flex items-center gap-2 mb-4">
                                 <Activity className="w-4 h-4 text-neon-purple" />
@@ -505,7 +452,6 @@ export default function VirtualLab2D() {
                             </div>
                         </div>
 
-                        {/* ── pH Calculator Panel ─────────────────────────────────── */}
                         <div>
                             <div className="flex items-center justify-between mb-2">
                                 <span className="text-[10px] font-black text-neon-cyan uppercase tracking-widest flex items-center gap-1.5">
@@ -519,13 +465,12 @@ export default function VirtualLab2D() {
                                         {showPHPanel ? 'Hide' : 'Show'}
                                     </button>
                                 ) : (
-                                    <span className="text-[9px] text-white/20 uppercase tracking-widest">Add a chemical to unlock</span>
+                                    <span className="text-[9px] text-white/20 uppercase tracking-widest">Add active chemical</span>
                                 )}
                             </div>
                             <PHCalculatorPanel ph={activePH} isVisible={showPHPanel && featureUnlocks.pHCalculator} />
                         </div>
 
-                        {/* ── Guided Experiment HUD ──────────────────────────────── */}
                         <div className="border-t border-white/5 pt-4">
                             {currentLesson ? (
                                 <GuidedExperimentHUD onExperimentComplete={handleExperimentComplete} />
@@ -553,7 +498,6 @@ export default function VirtualLab2D() {
                             )}
                         </div>
 
-                        {/* ── Lab Analytics Panel ─────────────────── */}
                         <div className="border-t border-white/5 pt-4">
                             <LabAnalyticsPanel activeTab={activeTab} titrationSession={titrationSession} />
                         </div>
@@ -561,7 +505,7 @@ export default function VirtualLab2D() {
                             <div className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Reaction Timeline</div>
                             <div className="space-y-1 max-h-28 overflow-y-auto pr-1">
                                 {actionTimeline.slice(-8).reverse().map((entry, idx) => (
-                                    <div key={`${entry.ts}-${idx}`} className="text-[9px] bg-white/5 border border-white/10 rounded-lg px-2 py-1 text-slate-300">
+                                    <div key={`timeline-${entry.ts}-${idx}`} className="text-[9px] bg-white/5 border border-white/10 rounded-lg px-2 py-1 text-slate-300">
                                         {new Date(entry.ts).toLocaleTimeString()} - {entry.type}
                                         {entry.reaction ? ` (${entry.reaction})` : ''}
                                     </div>
@@ -574,7 +518,6 @@ export default function VirtualLab2D() {
                     </div>
                 </aside>
 
-                {/* ── Main Stage ─────────────────────────────────────────────────── */}
                 <motion.div
                     initial={{ opacity: 0 }}
                     animate={{ opacity: 1 }}
@@ -582,7 +525,6 @@ export default function VirtualLab2D() {
                     className="flex-1 p-4 md:p-12 relative flex flex-col z-20 overflow-hidden"
                 >
                     <div className="flex-1 bg-black/40 rounded-[30px] md:rounded-[40px] border border-white/5 flex items-end justify-center pb-12 md:pb-24 gap-4 md:gap-8 px-4 md:px-12 relative overflow-hidden shadow-[inset_0_0_50px_rgba(0,0,0,0.5)]">
-                        {/* Lab surface */}
                         <div className="absolute bottom-0 left-0 w-full h-12 bg-white/5 border-t border-white/5 backdrop-blur-xl" />
 
                         <AnimatePresence>
@@ -601,7 +543,6 @@ export default function VirtualLab2D() {
                             )}
                         </AnimatePresence>
 
-                        {/* Toggle Hint Button */}
                         {!currentLesson && !showHint && (
                             <motion.button
                                 initial={{ opacity: 0 }}
@@ -614,7 +555,6 @@ export default function VirtualLab2D() {
                             </motion.button>
                         )}
 
-                        {/* Dedicated right-side Instruction Space (Notebook style) */}
                         <AnimatePresence mode="wait">
                             {currentLesson && (
                                 <motion.div
@@ -625,7 +565,6 @@ export default function VirtualLab2D() {
                                     className="absolute top-8 right-8 z-50 w-72 pointer-events-none"
                                 >
                                     <div className="advanced-glass p-6 rounded-[32px] border-purple-500/20 bg-black/40 backdrop-blur-3xl shadow-[0_20px_50px_rgba(0,0,0,0.4)] flex flex-col gap-4 relative overflow-hidden">
-                                        {/* Notebook/Log header */}
                                         <div className="flex items-center justify-between border-b border-white/10 pb-3">
                                             <div className="flex items-center gap-2">
                                                 <div className="w-1.5 h-1.5 rounded-full bg-purple-400 animate-flicker" />
@@ -641,7 +580,6 @@ export default function VirtualLab2D() {
                                             </p>
                                         </div>
 
-                                        {/* Progress indicators */}
                                         <div className="flex gap-1 mt-2">
                                             {currentLesson.steps.map((_, i) => (
                                                 <div
@@ -654,15 +592,12 @@ export default function VirtualLab2D() {
                                         <div className="text-[8px] font-mono text-white/20 uppercase tracking-widest text-right">
                                             Step {currentStepId + 1} of {currentLesson.steps.length}
                                         </div>
-
-                                        {/* Decorative holographic lines */}
                                         <div className="absolute top-0 right-0 w-24 h-24 bg-purple-500/5 blur-3xl pointer-events-none" />
                                     </div>
                                 </motion.div>
                             )}
                         </AnimatePresence>
 
-                        {/* Floating live pH badge (bottom-right of canvas) */}
                         <AnimatePresence>
                             {featureUnlocks.pHCalculator && (
                                 <motion.button
@@ -683,7 +618,6 @@ export default function VirtualLab2D() {
                                     <div className="text-2xl font-black font-mono leading-none" style={{ color: phColor(activePH) }}>
                                         {activePH.toFixed(2)}
                                     </div>
-                                    {/* tiny pH zone label */}
                                     <div className="text-[8px] font-bold uppercase tracking-widest" style={{ color: phColor(activePH) + '99' }}>
                                         {activePH < 7 ? 'ACIDIC' : activePH > 7 ? 'BASIC' : 'NEUTRAL'}
                                     </div>
@@ -691,7 +625,6 @@ export default function VirtualLab2D() {
                             )}
                         </AnimatePresence>
 
-                        {/* Floating Info Card */}
                         <AnimatePresence>
                             {(infoCardData || persistedInfoCard) && (
                                 <motion.div
@@ -723,20 +656,13 @@ export default function VirtualLab2D() {
                                             <span className="font-mono text-white text-xs">{(infoCardData || persistedInfoCard).state || 'LIQUID'}</span>
                                         </div>
                                     </div>
-                                    {persistedInfoCard && (
-                                        <div className="mt-4 pt-4 border-t border-white/5 text-[9px] text-slate-500 leading-relaxed italic">
-                                            Scientific Detail: Observed {(infoCardData || persistedInfoCard).chemicalName} at equilibrium. No active catalysis detected.
-                                        </div>
-                                    )}
                                 </motion.div>
                             )}
                         </AnimatePresence>
 
-                        {/* Equipment Mapping based on Tab */}
                         <div className="flex items-end gap-6 md:gap-12 relative z-30 transition-all duration-700 hover:scale-[1.01] justify-center h-full max-h-[550px] overflow-x-auto overflow-y-hidden w-full scrollbar-hide">
                             {activeTab === 'normal' && (
                                 <>
-                                    {/* Burner */}
                                     <div className="relative group shrink-0"
                                         onMouseEnter={() => setInfoCardData({ containerId: 'Burner', chemicalName: 'Bunsen Burner', chemicalFormula: 'Fire' })}
                                         onMouseLeave={() => setInfoCardData(null)}
@@ -745,7 +671,6 @@ export default function VirtualLab2D() {
                                         <Burner2D isOn={equipment.burner.isOn} intensity={equipment.burner.intensity} onClick={() => toggleEquipment('burner')} />
                                     </div>
 
-                                    {/* Beaker */}
                                     <div className="relative group shrink-0"
                                         onMouseEnter={() => setInfoCardData({ containerId: 'Beaker', chemicalName: containers['beaker1']?.components[0]?.id ? CHEMISTRY_DATABASE[containers['beaker1'].components[0].id]?.name : 'Empty', chemicalFormula: containers['beaker1']?.components[0]?.id ? CHEMISTRY_DATABASE[containers['beaker1'].components[0].id]?.formula : '', volume: containers['beaker1']?.volume, color: containers['beaker1']?.color })}
                                         onMouseLeave={() => setInfoCardData(null)}
@@ -756,7 +681,7 @@ export default function VirtualLab2D() {
                                     >
                                         <Beaker2D
                                             id="beaker1" selected={selectedContainer === 'beaker1'}
-                                            onClick={() => { }} // Handle via parent div for info card consistency
+                                            onClick={() => { }} 
                                             onDragStart={(e) => handleDragStart(e, 'beaker1')}
                                             onDrop={(e) => handleDrop(e, 'beaker1')}
                                             onDragOver={handleDragOver}
@@ -767,7 +692,6 @@ export default function VirtualLab2D() {
                                         )}
                                     </div>
 
-                                    {/* Test Tube 1 */}
                                     <div className="relative group shrink-0"
                                         onMouseEnter={() => setInfoCardData({ containerId: 'Test Tube', chemicalName: containers['testTube1']?.components[0]?.id ? CHEMISTRY_DATABASE[containers['testTube1'].components[0].id]?.name : 'Empty', chemicalFormula: containers['testTube1']?.components[0]?.id ? CHEMISTRY_DATABASE[containers['testTube1'].components[0].id]?.formula : '', volume: containers['testTube1']?.volume, color: containers['testTube1']?.color })}
                                         onMouseLeave={() => setInfoCardData(null)}
@@ -792,7 +716,6 @@ export default function VirtualLab2D() {
 
                             {activeTab === 'titration' && (
                                 <>
-                                    {/* Burette 1 */}
                                     <div className="relative flex flex-col items-center group shrink-0"
                                         onMouseEnter={() => setInfoCardData({ containerId: 'Burette', chemicalName: containers['burette1']?.components[0]?.id ? CHEMISTRY_DATABASE[containers['burette1'].components[0].id]?.name : 'Empty', chemicalFormula: containers['burette1']?.components[0]?.id ? CHEMISTRY_DATABASE[containers['burette1'].components[0].id]?.formula : '', volume: containers['burette1']?.volume, color: containers['burette1']?.color })}
                                         onMouseLeave={() => setInfoCardData(null)}
@@ -806,15 +729,12 @@ export default function VirtualLab2D() {
                                                 TITRANT SOURCE
                                             </span>
                                         </div>
-                                        <div
-                                            className={`relative p-2 rounded-2xl transition-all duration-300 ${selectedContainer === 'burette1' ? 'bg-white/5 ring-1 ring-neon-cyan/50' : 'hover:bg-white/[0.02]'}`}
-                                        >
+                                        <div className={`relative p-2 rounded-2xl transition-all duration-300 ${selectedContainer === 'burette1' ? 'bg-white/5 ring-1 ring-neon-cyan/50' : 'hover:bg-white/[0.02]'}`}>
                                             <Burette2D id="burette1" onValveChange={() => toggleBuretteValve('burette1')} onDrop={(amt) => handleBuretteDrop('burette1', amt)} />
                                             <div className="absolute inset-0 cursor-move" draggable onDragStart={(e) => handleDragStart(e, 'burette1')} onDragOver={handleDragOver} onDrop={(e) => handleDrop(e, 'burette1')} />
                                         </div>
                                     </div>
 
-                                    {/* Flask 1 (Analyte) */}
                                     <div className="relative flex flex-col items-center group shrink-0"
                                         onMouseEnter={() => setInfoCardData({ containerId: 'Conical Flask', chemicalName: containers['flask1']?.components[0]?.id ? CHEMISTRY_DATABASE[containers['flask1'].components[0].id]?.name : 'Empty', chemicalFormula: containers['flask1']?.components[0]?.id ? CHEMISTRY_DATABASE[containers['flask1'].components[0].id]?.formula : '', volume: containers['flask1']?.volume, color: containers['flask1']?.color })}
                                         onMouseLeave={() => setInfoCardData(null)}
@@ -841,7 +761,6 @@ export default function VirtualLab2D() {
                     </div>
                 </motion.div>
 
-                {/* Reaction Overlay */}
                 <AnimatePresence>
                     {activeReaction && (
                         <motion.div
@@ -873,19 +792,6 @@ export default function VirtualLab2D() {
                         </motion.div>
                     )}
 
-                    {activeReaction && (
-                        <div className="pointer-events-none absolute inset-x-0 top-20 z-[90] flex justify-center gap-2">
-                            {Array.from({ length: 10 }).map((_, index) => (
-                                <span
-                                    key={index}
-                                    className="h-1.5 w-1.5 rounded-full bg-cyan-300/80 shadow-[0_0_8px_rgba(56,189,248,0.9)] animate-[ping_1200ms_ease-out_infinite]"
-                                    style={{ animationDelay: `${index * 90}ms` }}
-                                />
-                            ))}
-                        </div>
-                    )}
-
-                    {/* Titration Summary Overlay */}
                     {titrationSession.isCompleted && (
                         <motion.div
                             initial={{ opacity: 0, scale: 0.9 }}
@@ -914,9 +820,6 @@ export default function VirtualLab2D() {
                                 </div>
 
                                 <div className="space-y-3">
-                                    <p className="text-[10px] text-slate-500 italic leading-relaxed">
-                                        The equivalence point was identified by the permanent color change of the indicator. You can use this volume to calculate the concentration of the unknown analyte.
-                                    </p>
                                     <button
                                         onClick={() => setTitrationSession({ isActive: false, initialVol: 0, finalVol: 0, titrantUsed: 0, isCompleted: false, endpointReached: false })}
                                         className="w-full py-4 rounded-2xl bg-white text-black font-black text-[10px] tracking-[0.3em] uppercase hover:bg-neon-purple hover:text-white transition-all shadow-xl"
@@ -930,7 +833,6 @@ export default function VirtualLab2D() {
                 </AnimatePresence>
             </main>
 
-            {/* ── Chemical Fabricator Footer ─────────────────────────────────── */}
             <footer className="lab-table-surface h-44 md:h-48 w-full backdrop-blur-2xl z-40 p-4 md:p-6 flex flex-col gap-4 shrink-0">
                 <div className="flex items-center justify-between max-w-7xl mx-auto w-full">
                     <div className="flex items-center gap-4 md:gap-10">
@@ -961,9 +863,7 @@ export default function VirtualLab2D() {
                         <button
                             key={chem.id}
                             onClick={() => addChemical(selectedContainer, chem.id, pourAmount)}
-                            draggable
-                            onDragStart={(e) => handleDragStart(e, chem.id)}
-                            className="flex-shrink-0 w-28 md:w-36 advanced-glass hover:bg-white/10 hover:border-neon-cyan/30 rounded-2xl p-3 md:p-4 flex flex-col items-center justify-center gap-2 transition-all active:scale-95 border-white/5 group cursor-grab active:cursor-grabbing relative overflow-hidden"
+                            className="flex-shrink-0 w-28 md:w-36 advanced-glass hover:bg-white/10 hover:border-neon-cyan/30 rounded-2xl p-3 md:p-4 flex flex-col items-center justify-center gap-2 transition-all active:scale-95 border-white/5 group relative overflow-hidden"
                         >
                             <div className="absolute inset-0 bg-gradient-to-t from-white/5 to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
                             <div className="w-6 h-6 md:w-8 md:h-8 rounded-full border-2 border-white/20 shadow-[0_0_15px_rgba(255,255,255,0.1)] transition-transform group-hover:scale-110" style={{ backgroundColor: chem.color || (chemicalsData && chemicalsData.find(c => c.id === chem.id)?.originalColor) || 'rgba(255,255,255,0.2)' }} />
@@ -976,7 +876,6 @@ export default function VirtualLab2D() {
                 </div>
             </footer>
 
-            {/* ── Overlays ────────────────────────────────────────────────────── */}
             <AnimatePresence>
                 {showLevelSelector && (
                     <KnowledgeLevelSelector
@@ -998,5 +897,3 @@ export default function VirtualLab2D() {
         </div>
     );
 }
-
-

@@ -16,7 +16,7 @@ export function ThemeProvider({ children }) {
         return () => media.removeEventListener('change', apply);
     }, []);
 
-    const normalizedTheme = themeMode === 'system' ? systemTheme : (themeMode === 'light' ? 'light' : 'dark');
+    const normalizedTheme = 'dark'; // Forced dark theme overrides user/system preference
 
     useEffect(() => {
         const root = document.documentElement;

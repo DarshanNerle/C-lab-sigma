@@ -22,7 +22,7 @@
   --lab-radius-sm: 14px;
 }
 
-html[data-theme='light'] {
+[data-theme='light'] {
   --lab-bg: #edf4fb;
   --lab-bg-accent: radial-gradient(circle at top left, rgba(59, 130, 246, 0.18), transparent 32%), radial-gradient(circle at top right, rgba(34, 211, 238, 0.18), transparent 26%), linear-gradient(180deg, #f8fbff 0%, #edf4fb 48%, #e4eef8 100%);
   --lab-surface: rgba(255, 255, 255, 0.84);

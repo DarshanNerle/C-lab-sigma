@@ -12,27 +12,41 @@ export default function LabSessionController({
     onStart, 
     onEnd, 
     durationMinutes = 60,
-    labName = "Virtual Chemistry Lab"
+    labName = "Virtual Chemistry Lab",
+    isActive: externalActive = false
 }) {
-    const [isActive, setIsActive] = useState(false);
+    const [isActive, setIsActive] = useState(externalActive);
+    const [isPaused, setIsPaused] = useState(false);
     const [timeLeft, setTimeLeft] = useState(durationMinutes * 60);
     const [showConfirmEnd, setShowConfirmEnd] = useState(false);
     const [showFeedbackModal, setShowFeedbackModal] = useState(false);
     const timerRef = useRef(null);
 
+    // Sync internal isActive with external prop
     useEffect(() => {
-        if (isActive && timeLeft > 0) {
+        if (externalActive && !isActive) {
+            setIsActive(true);
+            setIsPaused(false);
+            setTimeLeft(durationMinutes * 60);
+        } else if (!externalActive && isActive) {
+            setIsActive(false);
+            setIsPaused(false);
+        }
+    }, [externalActive]);
+
+    useEffect(() => {
+        if (isActive && !isPaused && timeLeft > 0) {
             timerRef.current = setInterval(() => {
                 setTimeLeft(prev => prev - 1);
             }, 1000);
-        } else if (timeLeft === 0 && isActive) {
+        } else if (timeLeft <= 0 && isActive && !isPaused) {
             handleRequestEnd();
         }
 
         return () => {
             if (timerRef.current) clearInterval(timerRef.current);
         };
-    }, [isActive, timeLeft]);
+    }, [isActive, isPaused, timeLeft]);
 
     const formatTime = (seconds) => {
         const mins = Math.floor(seconds / 60);
@@ -42,18 +56,26 @@ export default function LabSessionController({
 
     const handleStartSession = () => {
         setIsActive(true);
+        setIsPaused(false);
         setTimeLeft(durationMinutes * 60);
         soundManager.play('success');
         if (onStart) onStart();
     };
 
     const handleRequestEnd = () => {
+        setIsPaused(true);
         setShowConfirmEnd(false);
         setShowFeedbackModal(true);
     };
 
+    const handleCancelEnd = () => {
+        setIsPaused(false);
+        setShowConfirmEnd(false);
+    }
+
     const handleFinalSubmit = (feedbackData) => {
         setIsActive(false);
+        setIsPaused(false);
         setShowFeedbackModal(false);
         soundManager.play('clink');
         if (onEnd) {
@@ -113,13 +135,13 @@ export default function LabSessionController({
                                 {!showConfirmEnd ? (
                                     <button
                                         onClick={() => setShowConfirmEnd(true)}
-                                        className="flex items-center gap-2 text-rose-400 hover:text-rose-300 transition-colors py-1 box-shadow"
+                                        className="flex items-center gap-2 text-rose-400 hover:text-rose-300 transition-colors py-1 shadow-sm"
                                     >
                                         <Square className="w-4 h-4 fill-current" />
                                         <span className="text-[10px] font-black uppercase tracking-widest leading-none">End Lab</span>
                                     </button>
                                 ) : (
-                                    <div className="absolute right-0 top-1/2 -translate-y-1/2 flex items-center gap-2 bg-slate-950 border border-white/10 rounded-xl p-1 whitespace-nowrap z-[200] shadow-2xl">
+                                    <div className="absolute right-0 top-1/2 -translate-y-1/2 flex items-center gap-2 bg-slate-950 border border-white/10 rounded-xl p-1 whitespace-nowrap z-[1000] shadow-2xl">
                                         <span className="text-[9px] font-bold text-slate-400 px-2 uppercase">Confirm End?</span>
                                         <button
                                             onClick={handleRequestEnd}
@@ -128,7 +150,7 @@ export default function LabSessionController({
                                             Yes, End
                                         </button>
                                         <button
-                                            onClick={() => setShowConfirmEnd(false)}
+                                            onClick={handleCancelEnd}
                                             className="px-3 py-1 bg-slate-800 rounded-lg text-[10px] font-black uppercase text-slate-300 hover:bg-slate-700 transition-colors"
                                         >
                                             Cancel
@@ -143,7 +165,11 @@ export default function LabSessionController({
 
             <LabFeedbackModal 
                 isOpen={showFeedbackModal} 
-                onClose={() => setShowFeedbackModal(false)}
+                onClose={() => {
+                    setShowFeedbackModal(false);
+                    // If they didn't finish, unpause (unless timeLeft is 0)
+                    if (timeLeft > 0) setIsPaused(false);
+                }}
                 onSubmit={handleFinalSubmit}
                 labName={labName}
             />

@@ -1,0 +1,14 @@
+﻿git : To 
+https://github.com/shreyashmane-dev/C-lab
+At line:1 char:1
++ git push -u origin master:main *>&1 | 
+Out-File -Encoding utf8 push_lo ...
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified 
+   : (To https://gith...hmane-dev/C-lab:S  
+  tring) [], RemoteException
+    + FullyQualifiedErrorId : NativeComman 
+   dError
+ 
+ * [new branch]      master -> main
+branch 'master' set up to track 'origin/main'.

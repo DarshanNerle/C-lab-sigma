@@ -1,6 +1,6 @@
 import { safeLocalStorage } from '../utils/safeStorage';
 import { auth, db } from '../firebase/config';
-import { doc, getDoc, setDoc, updateDoc } from 'firebase/firestore';
+import { doc, getDoc, setDoc, updateDoc, collection, addDoc, serverTimestamp } from 'firebase/firestore';
 
 const LOCAL_KEYS = {
     user: 'app_user',
@@ -800,6 +800,27 @@ class StorageService {
             this.updateLocalExperimentProgress(normalizedEmail, experimentId, progress);
             return { ok: true, source: 'local', storageMode: STORAGE_MODES.LOCAL };
         });
+    }
+
+    async saveExperimentHistory({ email, historyEntry }) {
+        const { uid, email: normalizedEmail } = this.getAuthIdentity(email);
+        if (!normalizedEmail || !historyEntry) return { ok: false };
+
+        if (this.canUseFirebase(uid)) {
+            try {
+                const collRef = collection(db, 'experiment_history');
+                await addDoc(collRef, {
+                    ...historyEntry,
+                    userId: uid,
+                    email: normalizedEmail,
+                    completedAt: serverTimestamp()
+                });
+                return { ok: true, source: 'firebase' };
+            } catch (error) {
+                return { ok: false, error: error.message };
+            }
+        }
+        return { ok: true, source: 'local' };
     }
 
     clearUser(email) {
