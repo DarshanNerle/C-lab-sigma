@@ -58,6 +58,23 @@ const useAIStore = create(
                 return { fullChatHistory: [] };
             }),
 
+            updateLastChatMessage: (content, mode = null) => set(state => {
+                const targetMode = mode || state.currentMode;
+                if (targetMode === 'mini_assistant') {
+                    const newHistory = [...state.miniChatHistory];
+                    if (newHistory.length > 0) {
+                        newHistory[newHistory.length - 1] = { ...newHistory[newHistory.length - 1], content };
+                    }
+                    return { miniChatHistory: newHistory };
+                } else {
+                    const newHistory = [...state.fullChatHistory];
+                    if (newHistory.length > 0) {
+                        newHistory[newHistory.length - 1] = { ...newHistory[newHistory.length - 1], content };
+                    }
+                    return { fullChatHistory: newHistory };
+                }
+            }),
+
             updateProgress: (newProgress) => set(state => ({
                 progress: { ...state.progress, ...newProgress }
             })),

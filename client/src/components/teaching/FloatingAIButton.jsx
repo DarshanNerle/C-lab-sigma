@@ -199,14 +199,17 @@ const FloatingAIButton = () => {
 
         try {
             const labContext = isLabPage ? `Current lab containers: ${Object.keys(containers).join(', ')}. Action history: ${actionTimeline.slice(-5).map(a => a.type).join(', ')}` : '';
+            addChatMessage({ role: 'assistant', content: '' }, 'mini_assistant');
             const res = await AIController.sendMessage({
                 message: trimmed,
                 context: `Page: ${currentPage}. ${labContext}`,
                 level: userLevel,
                 mode: 'mini_assistant',
-                userEmail
+                userEmail,
+                onChunk: (text) => {
+                    useAIStore.getState().updateLastChatMessage(text, 'mini_assistant');
+                }
             });
-            addChatMessage({ role: 'assistant', content: res }, 'mini_assistant');
             if (voiceEnabled) await speakResponse(res);
         } catch (err) {
             console.error('[AI:Submit] Error:', err);
@@ -226,14 +229,17 @@ const FloatingAIButton = () => {
         
         const prompt = `PREDICTOR MODE. Context: ${currentPage}. Lab Actions: ${actionTimeline.slice(-5).map(a => a.type).join(', ')}. Academic: ${userLevel}.`;
         try {
+            addChatMessage({ role: 'assistant', content: '' }, 'mini_assistant');
             const res = await AIController.sendMessage({
                 message: prompt,
                 context: currentPage,
                 level: userLevel,
                 mode: 'mini_assistant',
-                userEmail
+                userEmail,
+                onChunk: (text) => {
+                    useAIStore.getState().updateLastChatMessage(text, 'mini_assistant');
+                }
             });
-            addChatMessage({ role: 'assistant', content: res }, 'mini_assistant');
             await speakResponse(res);
         } catch (err) { setErrorText('Data synthesis failed.'); }
         finally { setIsTyping(false); }

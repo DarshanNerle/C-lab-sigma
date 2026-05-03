@@ -7,7 +7,7 @@ import { storageService } from '../../lib/storageService';
 export class AIController {
     static pending = new Set();
 
-    static async sendMessage({ message, context, level, mode, userEmail = null }) {
+    static async sendMessage({ message, context, level, mode, userEmail = null, onChunk = null }) {
         const trimmed = String(message || '').trim();
         if (!trimmed) {
             throw new Error('Message is required.');
@@ -41,19 +41,36 @@ export class AIController {
                 })
             });
 
-            let payload = {};
-            try {
-                payload = await response.json();
-            } catch {
-                payload = {};
-            }
-
             if (!response.ok) {
+                let payload = {};
+                try { payload = await response.json(); } catch { }
                 throw new Error(payload.error || 'AI service request failed.');
             }
 
-            const aiContent = String(payload.reply || '').trim();
-            if (!aiContent) {
+            // Check if response is streaming
+            const contentType = response.headers.get('content-type') || '';
+            const isStreaming = contentType.includes('text/event-stream') || contentType.includes('text/plain');
+
+            let aiContent = '';
+
+            if (isStreaming && response.body) {
+                const reader = response.body.getReader();
+                const decoder = new TextDecoder('utf-8');
+                
+                while (true) {
+                    const { value, done } = await reader.read();
+                    if (done) break;
+                    const chunk = decoder.decode(value, { stream: true });
+                    aiContent += chunk;
+                    if (onChunk) onChunk(aiContent);
+                }
+            } else {
+                let payload = {};
+                try { payload = await response.json(); } catch { }
+                aiContent = String(payload.reply || '').trim();
+            }
+
+            if (!aiContent && !onChunk) {
                 throw new Error('AI returned an empty response.');
             }
 

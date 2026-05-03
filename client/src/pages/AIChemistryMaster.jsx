@@ -192,15 +192,18 @@ const AIChemistryMaster = () => {
         ].filter(Boolean).join(' ');
 
         try {
+            addChatMessage({ role: 'assistant', content: '' }, 'full_learning');
             const response = await AIController.sendMessage({
                 message: composedInput,
                 context: currentTopic,
                 level: userLevel,
                 mode: 'full_learning',
-                userEmail
+                userEmail,
+                onChunk: (text) => {
+                    useAIStore.getState().updateLastChatMessage(text, 'full_learning');
+                }
             });
 
-            addChatMessage({ role: 'assistant', content: response }, 'full_learning');
             await speakResponse(response);
         } catch (error) {
             const safeMessage = error?.message || 'AI is currently unavailable.';
